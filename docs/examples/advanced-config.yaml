@@ -1,0 +1,205 @@
+# Advanced Configuration Example
+# This configuration includes all available options with explanations
+
+# Directory Configuration
+directories:
+  source: "/media/videos/unsorted"         # Source directory for video files
+  target: "/media/videos/organized"        # Target directory for organized files
+
+# Login Credentials (Optional but recommended for better results)
+credentials:
+  javdb:
+    username: "your_javdb_username"        # Your JavDB account username
+    password: "your_javdb_password"        # Your JavDB account password
+
+# Scraper Configuration
+scraping:
+  priority: ["javdb", "javlibrary"]        # Scraper priority order
+  max_concurrent_files: 4                  # Process up to 4 files simultaneously
+  max_concurrent_requests: 3               # Max concurrent web requests per scraper
+  max_concurrent_downloads: 6              # Max concurrent image downloads
+  retry_attempts: 3                        # Number of retry attempts for failures
+  timeout: 45                              # Request timeout in seconds
+  delay_between_requests: 1.0              # Delay between requests (seconds)
+
+# File Organization
+organization:
+  # Naming pattern with all available placeholders
+  naming_pattern: "{studio}/{actress}/{code} - {title}.{ext}"
+  
+  # Alternative patterns:
+  # naming_pattern: "{actress}/{code}/{code}.{ext}"                    # Simple
+  # naming_pattern: "{year}/{studio}/{actress}/{code}.{ext}"          # By year
+  # naming_pattern: "{genre}/{actress}/{code} [{studio}].{ext}"       # By genre
+  
+  download_images: true                    # Download cover and poster images
+  save_metadata: true                      # Save metadata as JSON files
+  create_thumbnails: true                  # Create thumbnail images
+  safe_mode: true                          # Copy files instead of moving
+  handle_duplicates: "skip"                # Options: skip, overwrite, rename
+  
+  # Image settings
+  image_quality: 90                        # JPEG quality (1-100)
+  max_image_size: [1920, 1080]            # Maximum image dimensions [width, height]
+  thumbnail_size: [300, 200]              # Thumbnail dimensions
+
+# Browser Configuration
+browser:
+  headless: true                           # Run in headless mode
+  timeout: 45                              # Browser operation timeout
+  window_size: [1920, 1080]               # Browser window size
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  # Chrome options
+  chrome_options:
+    - "--no-sandbox"
+    - "--disable-dev-shm-usage"
+    - "--disable-gpu"
+    - "--disable-extensions"
+    - "--disable-plugins"
+    - "--disable-images"                   # Faster loading (images downloaded separately)
+
+# Network Configuration
+network:
+  proxy_url: ""                            # HTTP/HTTPS proxy URL
+  # Examples:
+  # proxy_url: "http://proxy.example.com:8080"
+  # proxy_url: "http://user:pass@proxy.example.com:8080"
+  
+  verify_ssl: true                         # Verify SSL certificates
+  max_retries: 3                           # Network retry attempts
+  backoff_factor: 0.3                     # Exponential backoff factor
+  
+  # Rate limiting
+  requests_per_second: 2                   # Max requests per second per scraper
+  burst_requests: 5                        # Burst request allowance
+
+# Performance Configuration
+performance:
+  memory_limit_mb: 2048                    # Memory limit in MB
+  temp_directory: "/tmp/av-scraper"        # Temporary files directory
+  cache_size: 1000                         # Metadata cache size
+  cleanup_temp_files: true                 # Clean up temporary files
+  
+  # Progress tracking
+  save_progress_interval: 10               # Save progress every N files
+  progress_file: "progress/session.json"   # Progress file location
+
+# Error Handling
+error_handling:
+  continue_on_error: true                  # Continue processing on errors
+  max_consecutive_errors: 5                # Stop after N consecutive errors
+  error_log_file: "logs/errors.log"       # Separate error log file
+  
+  # Retry configuration
+  retry_delays: [1, 2, 5]                 # Retry delays in seconds
+  retry_on_http_errors: [429, 502, 503, 504]  # HTTP errors to retry
+
+# Logging Configuration
+logging:
+  level: "INFO"                            # Log level
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_rotation: true                      # Rotate log files
+  max_file_size_mb: 10                    # Max log file size
+  backup_count: 5                          # Number of backup log files
+  
+  # Component-specific log levels
+  component_levels:
+    "scrapers": "DEBUG"                    # Debug scraper operations
+    "browser": "WARNING"                   # Reduce browser noise
+    "network": "INFO"                      # Network operations
+
+# Feature Flags
+features:
+  enable_duplicate_detection: true         # Detect and handle duplicate files
+  enable_progress_resume: true             # Resume interrupted processing
+  enable_metadata_validation: true        # Validate scraped metadata
+  enable_image_optimization: true         # Optimize downloaded images
+  enable_statistics_tracking: true        # Track processing statistics
+  enable_webhook_notifications: false     # Send webhook notifications
+
+# Webhook Configuration (if enabled)
+webhooks:
+  completion_url: ""                       # URL to call when processing completes
+  error_url: ""                           # URL to call on errors
+  progress_url: ""                        # URL to call for progress updates
+  headers:
+    "Authorization": "Bearer your-token"
+    "Content-Type": "application/json"
+
+# Advanced Scraper Settings
+scraper_settings:
+  javdb:
+    login_required: true                   # Require login for better results
+    use_cookies: true                      # Save and reuse cookies
+    cookie_file: "cookies/javdb.json"      # Cookie storage file
+    captcha_solver: "manual"               # Captcha solving method
+    
+  javlibrary:
+    use_mirror_sites: true                 # Try mirror sites if main site fails
+    mirror_urls:
+      - "https://www.javlibrary.com"
+      - "https://www.j99.co"
+    
+# File Filtering
+filters:
+  # Minimum file size (in MB)
+  min_file_size_mb: 100
+  
+  # Maximum file size (in GB)
+  max_file_size_gb: 10
+  
+  # Exclude patterns (regex)
+  exclude_patterns:
+    - ".*sample.*"
+    - ".*preview.*"
+    - ".*trailer.*"
+  
+  # Include only specific patterns
+  include_patterns:
+    - ".*\\.(mp4|mkv|avi|wmv|mov)$"
+
+# Supported Extensions (comprehensive list)
+supported_extensions:
+  - ".mp4"      # MPEG-4 Video
+  - ".mkv"      # Matroska Video
+  - ".avi"      # Audio Video Interleave
+  - ".wmv"      # Windows Media Video
+  - ".mov"      # QuickTime Movie
+  - ".flv"      # Flash Video
+  - ".webm"     # WebM Video
+  - ".m4v"      # iTunes Video
+  - ".ts"       # MPEG Transport Stream
+  - ".m2ts"     # Blu-ray BDAV Video
+  - ".mpg"      # MPEG Video
+  - ".mpeg"     # MPEG Video
+  - ".3gp"      # 3GPP Video
+  - ".asf"      # Advanced Systems Format
+  - ".rm"       # RealMedia
+  - ".rmvb"     # RealMedia Variable Bitrate
+
+# Custom Naming Patterns Examples
+# Uncomment and modify as needed:
+
+# naming_patterns:
+#   by_actress: "{actress}/{code}/{code}.{ext}"
+#   by_studio: "{studio}/{actress}/{code} - {title}.{ext}"
+#   by_year: "{year}/{actress}/{code}.{ext}"
+#   by_genre: "{genre}/{actress}/{code}.{ext}"
+#   detailed: "{studio} - {actress} - {code} - {title} ({year}).{ext}"
+#   simple: "{code}.{ext}"
+
+# Quality Settings
+quality:
+  # Metadata quality requirements
+  require_title: true                      # Require title to be found
+  require_actress: true                    # Require at least one actress
+  require_cover_image: false               # Don't require cover image
+  
+  # Image quality settings
+  download_cover: true                     # Download cover image
+  download_poster: true                    # Download poster image
+  download_screenshots: false              # Download screenshot images
+  
+  # Metadata completeness score (0-100)
+  min_completeness_score: 60               # Minimum metadata completeness

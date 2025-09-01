@@ -1,0 +1,97 @@
+# Default configuration for Docker deployment
+# This file provides sensible defaults for containerized deployment
+
+logging:
+  level: INFO
+  directory: /app/logs
+  filename: av_scraper.log
+  console: true
+  file: true
+  colored: false  # Disable colors in container logs
+  json_format: false
+  max_file_size_mb: 10
+  backup_count: 3
+
+scanner:
+  source_directory: /app/source
+  supported_formats:
+    - .mp4
+    - .mkv
+    - .avi
+    - .wmv
+    - .mov
+    - .m4v
+    - .flv
+  recursive: true
+  min_file_size_mb: 10  # Skip very small files
+
+scrapers:
+  javdb:
+    enabled: true
+    use_login: false  # Disable login by default for security
+    priority: 1
+  
+  javlibrary:
+    enabled: true
+    priority: 2
+    language: en
+  
+  coordinator:
+    max_concurrent_requests: 2  # Conservative for container
+    timeout_seconds: 60
+    retry_attempts: 3
+    cache_duration_minutes: 60
+
+organizer:
+  target_directory: /app/target
+  naming_pattern: "{actress}/{code}/{code}.{ext}"
+  conflict_resolution: rename
+  create_metadata_files: true
+  verify_file_integrity: true
+  safe_mode: true  # Copy files by default for safety
+  max_filename_length: 255
+
+downloader:
+  enabled: true
+  max_concurrent_downloads: 2
+  timeout_seconds: 30
+  retry_attempts: 3
+  max_file_size_mb: 50
+  convert_format: auto
+  resize_images: false
+  max_width: 1920
+  max_height: 1080
+  jpeg_quality: 85
+  create_thumbnails: false
+  thumbnail_size: [300, 200]
+
+processing:
+  max_concurrent_files: 2  # Conservative for container resources
+  
+webdriver:
+  headless: true
+  timeout: 30
+  user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  window_size: [1920, 1080]
+  
+http_client:
+  timeout: 30
+  max_retries: 3
+  rate_limit_delay: 2.0
+  proxy_url: null  # Set if needed
+
+# Container-specific settings
+container:
+  data_directory: /app/data
+  temp_directory: /tmp
+  
+# Health check settings
+health:
+  check_interval_seconds: 30
+  timeout_seconds: 10
+  
+# Resource monitoring
+monitoring:
+  enable_stats: true
+  stats_interval_seconds: 60
+  log_stats: true

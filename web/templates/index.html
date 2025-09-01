@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoJAV - 视频元数据管理系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #6366f1;
+            --secondary-color: #8b5cf6;
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --dark-bg: #1f2937;
+            --light-bg: #f3f4f6;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .main-container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            margin: 20px;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            background: var(--dark-bg);
+            color: white;
+            min-height: calc(100vh - 40px);
+            padding: 30px 20px;
+        }
+
+        .sidebar .nav-link {
+            color: rgba(255, 255, 255, 0.8);
+            padding: 12px 20px;
+            margin: 5px 0;
+            border-radius: 10px;
+            transition: all 0.3s;
+        }
+
+        .sidebar .nav-link:hover,
+        .sidebar .nav-link.active {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .sidebar .nav-link i {
+            margin-right: 10px;
+            width: 20px;
+        }
+
+        .content-area {
+            padding: 30px;
+            min-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .stat-card .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .stat-card .stat-label {
+            color: #6b7280;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .config-section {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .config-section h5 {
+            color: var(--primary-color);
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--light-bg);
+        }
+
+        .form-label {
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 5px;
+        }
+
+        .form-control, .form-select {
+            border-radius: 10px;
+            border: 1px solid #e5e7eb;
+            padding: 10px 15px;
+        }
+
+        .form-control:focus, .form-select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .btn-primary {
+            background: var(--primary-color);
+            border: none;
+            border-radius: 10px;
+            padding: 10px 30px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-primary:hover {
+            background: var(--secondary-color);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(139, 92, 246, 0.3);
+        }
+
+        .btn-success {
+            background: var(--success-color);
+            border: none;
+            border-radius: 10px;
+            padding: 10px 30px;
+        }
+
+        .btn-danger {
+            background: var(--danger-color);
+            border: none;
+            border-radius: 10px;
+            padding: 10px 30px;
+        }
+
+        .progress {
+            height: 25px;
+            border-radius: 15px;
+            background: var(--light-bg);
+        }
+
+        .progress-bar {
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+            border-radius: 15px;
+            font-weight: 600;
+        }
+
+        .log-container {
+            background: #1f2937;
+            color: #10b981;
+            padding: 15px;
+            border-radius: 10px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+
+        .log-entry {
+            padding: 5px 10px;
+            margin: 2px 0;
+            border-left: 3px solid transparent;
+        }
+
+        .log-entry.INFO {
+            border-left-color: #3b82f6;
+        }
+
+        .log-entry.WARNING {
+            border-left-color: #f59e0b;
+            color: #fbbf24;
+        }
+
+        .log-entry.ERROR {
+            border-left-color: #ef4444;
+            color: #f87171;
+        }
+
+        .file-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border: 1px solid #e5e7eb;
+            transition: all 0.3s;
+        }
+
+        .file-item:hover {
+            border-color: var(--primary-color);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+        }
+
+        .spinner-border {
+            width: 1rem;
+            height: 1rem;
+            border-width: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="row g-0">
+            <!-- 侧边栏 -->
+            <div class="col-md-2 sidebar">
+                <h4 class="mb-4">
+                    <i class="bi bi-film"></i> AutoJAV
+                </h4>
+                <nav class="nav flex-column">
+                    <a class="nav-link active" href="#dashboard" data-page="dashboard">
+                        <i class="bi bi-speedometer2"></i> 仪表板
+                    </a>
+                    <a class="nav-link" href="#config" data-page="config">
+                        <i class="bi bi-gear"></i> 配置管理
+                    </a>
+                    <a class="nav-link" href="#scan" data-page="scan">
+                        <i class="bi bi-folder-open"></i> 文件扫描
+                    </a>
+                    <a class="nav-link" href="#task" data-page="task">
+                        <i class="bi bi-play-circle"></i> 任务管理
+                    </a>
+                    <a class="nav-link" href="#logs" data-page="logs">
+                        <i class="bi bi-terminal"></i> 实时日志
+                    </a>
+                    <a class="nav-link" href="#stats" data-page="stats">
+                        <i class="bi bi-bar-chart"></i> 统计信息
+                    </a>
+                </nav>
+
+                <div class="mt-auto pt-4 border-top border-secondary">
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle"></i> v1.0.0<br>
+                        <span id="connection-status">
+                            <i class="bi bi-circle-fill text-danger"></i> 未连接
+                        </span>
+                    </small>
+                </div>
+            </div>
+
+            <!-- 内容区域 -->
+            <div class="col-md-10 content-area">
+                <!-- 仪表板页面 -->
+                <div id="dashboard-page" class="page-content">
+                    <h2 class="mb-4">仪表板</h2>
+                    
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" id="stat-total-files">0</div>
+                                <div class="stat-label">总文件数</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" id="stat-total-size">0 GB</div>
+                                <div class="stat-label">总大小</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" id="stat-actresses">0</div>
+                                <div class="stat-label">女优数量</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" id="stat-pending">0</div>
+                                <div class="stat-label">待处理</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="config-section">
+                                <h5>当前任务状态</h5>
+                                <div id="task-status-display">
+                                    <p class="text-muted">没有运行中的任务</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="config-section">
+                                <h5>最近处理文件</h5>
+                                <div id="recent-files-list">
+                                    <p class="text-muted">暂无数据</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 配置管理页面 -->
+                <div id="config-page" class="page-content" style="display: none;">
+                    <h2 class="mb-4">配置管理</h2>
+                    
+                    <div class="config-section">
+                        <h5><i class="bi bi-folder2"></i> 目录设置</h5>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">源文件目录</label>
+                                <input type="text" class="form-control" id="config-source-dir" placeholder="/path/to/source">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">目标目录</label>
+                                <input type="text" class="form-control" id="config-target-dir" placeholder="/path/to/target">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h5><i class="bi bi-globe"></i> 刮削设置</h5>
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">刮削器优先级</label>
+                                <select class="form-select" id="config-scraper-priority">
+                                    <option value="javdb,javlibrary">JavDB → JavLibrary</option>
+                                    <option value="javlibrary,javdb">JavLibrary → JavDB</option>
+                                    <option value="javdb">仅 JavDB</option>
+                                    <option value="javlibrary">仅 JavLibrary</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">并发文件数</label>
+                                <input type="number" class="form-control" id="config-max-concurrent" min="1" max="10" value="2">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">超时时间（秒）</label>
+                                <input type="number" class="form-control" id="config-timeout" min="10" max="120" value="30">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h5><i class="bi bi-files"></i> 文件整理设置</h5>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">命名模式</label>
+                                <select class="form-select" id="config-naming-pattern">
+                                    <option value="{actress}/{code}/{code}.{ext}">女优/代码/代码.扩展名</option>
+                                    <option value="{code}/{code}.{ext}">代码/代码.扩展名</option>
+                                    <option value="{studio}/{code}/{code}.{ext}">制作商/代码/代码.扩展名</option>
+                                    <option value="{year}/{month}/{code}.{ext}">年/月/代码.扩展名</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">冲突处理</label>
+                                <select class="form-select" id="config-conflict-resolution">
+                                    <option value="rename">重命名</option>
+                                    <option value="skip">跳过</option>
+                                    <option value="overwrite">覆盖</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="config-safe-mode" checked>
+                                    <label class="form-check-label" for="config-safe-mode">
+                                        安全模式（复制而非移动）
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="config-download-images" checked>
+                                    <label class="form-check-label" for="config-download-images">
+                                        下载封面图片
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="config-save-metadata" checked>
+                                    <label class="form-check-label" for="config-save-metadata">
+                                        保存元数据JSON
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-end">
+                        <button class="btn btn-primary" onclick="saveConfig()">
+                            <i class="bi bi-save"></i> 保存配置
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 文件扫描页面 -->
+                <div id="scan-page" class="page-content" style="display: none;">
+                    <h2 class="mb-4">文件扫描</h2>
+                    
+                    <div class="config-section">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5>源目录文件</h5>
+                            <button class="btn btn-primary" onclick="scanFiles()">
+                                <i class="bi bi-arrow-clockwise"></i> 扫描文件
+                            </button>
+                        </div>
+                        
+                        <div id="scan-results" class="file-list">
+                            <p class="text-muted">点击"扫描文件"按钮开始扫描</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 任务管理页面 -->
+                <div id="task-page" class="page-content" style="display: none;">
+                    <h2 class="mb-4">任务管理</h2>
+                    
+                    <div class="config-section">
+                        <h5>任务控制</h5>
+                        <div class="row align-items-center">
+                            <div class="col-md-8">
+                                <div class="progress mb-3">
+                                    <div id="task-progress-bar" class="progress-bar" role="progressbar" style="width: 0%">0%</div>
+                                </div>
+                                <p id="task-info" class="text-muted">准备就绪</p>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                <button id="btn-start-task" class="btn btn-success" onclick="startTask()">
+                                    <i class="bi bi-play-fill"></i> 开始任务
+                                </button>
+                                <button id="btn-stop-task" class="btn btn-danger" onclick="stopTask()" style="display: none;">
+                                    <i class="bi bi-stop-fill"></i> 停止任务
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h5>任务历史</h5>
+                        <div id="task-history-list">
+                            <p class="text-muted">暂无任务历史</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 实时日志页面 -->
+                <div id="logs-page" class="page-content" style="display: none;">
+                    <h2 class="mb-4">实时日志</h2>
+                    
+                    <div class="config-section">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5>日志输出</h5>
+                            <button class="btn btn-sm btn-outline-danger" onclick="clearLogs()">
+                                <i class="bi bi-trash"></i> 清空日志
+                            </button>
+                        </div>
+                        <div id="log-container" class="log-container">
+                            <div class="text-muted p-3">等待日志输出...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 统计信息页面 -->
+                <div id="stats-page" class="page-content" style="display: none;">
+                    <h2 class="mb-4">统计信息</h2>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="config-section">
+                                <h5>按女优统计</h5>
+                                <div id="stats-by-actress">
+                                    <p class="text-muted">加载中...</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="config-section">
+                                <h5>最近添加文件</h5>
+                                <div id="stats-recent-files">
+                                    <p class="text-muted">加载中...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 通知容器 -->
+    <div class="toast-container"></div>
+
+    <!-- 引入依赖 -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.5.0/dist/socket.io.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

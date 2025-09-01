@@ -1,0 +1,58 @@
+version: '3.8'
+
+# Development override for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  av-scraper:
+    # Build from source in development
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage for development tools
+    
+    # Development restart policy
+    restart: "no"
+    
+    # Development environment overrides
+    environment:
+      - LOG_LEVEL=DEBUG
+      - DEBUG_MODE=true
+      - SAFE_MODE=true  # Always copy files in development
+      - MAX_CONCURRENT_FILES=1  # Slower processing for debugging
+      - MAX_CONCURRENT_REQUESTS=1
+      - MAX_CONCURRENT_DOWNLOADS=1
+    
+    # Mount source code for live development
+    volumes:
+      - ./src:/app/src:rw
+      - ./tests:/app/tests:rw
+      - ./config:/app/config:rw
+      - ./examples:/app/examples:rw
+      - ./scripts:/app/scripts:rw
+      - ${SOURCE_DIR:-./source}:/app/source:ro
+      - ${TARGET_DIR:-./organized}:/app/target:rw
+      - ${LOGS_DIR:-./logs}:/app/logs:rw
+      - chrome-data:/app/.chrome-data:rw
+    
+    # Development ports (if needed for debugging)
+    ports:
+      - "9222:9222"  # Chrome DevTools debugging port
+    
+    # Override command for development
+    command: ["python", "-u", "main.py"]
+    
+    # Development logging (more verbose)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "1"
+    
+    # Allow debugging tools
+    cap_add:
+      - SYS_PTRACE
+    
+    # Development security (less restrictive)
+    security_opt:
+      - apparmor:unconfined

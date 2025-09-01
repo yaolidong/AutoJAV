@@ -1,0 +1,351 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    name: Code Quality Checks
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run flake8
+      run: |
+        flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 src/ tests/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Run mypy
+      run: |
+        mypy src/ --ignore-missing-imports
+    
+    - name: Check import sorting
+      run: |
+        isort --check-only src/ tests/
+    
+    - name: Check code formatting
+      run: |
+        black --check src/ tests/
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+    
+    name: Unit Tests (Python ${{ matrix.python-version }})
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg unzip curl
+    
+    - name: Install Chrome
+      run: |
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    
+    - name: Install ChromeDriver
+      run: |
+        CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE)
+        wget -N http://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip
+        unzip chromedriver_linux64.zip
+        sudo mv chromedriver /usr/local/bin/chromedriver
+        sudo chmod +x /usr/local/bin/chromedriver
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run unit tests with coverage
+      run: |
+        pytest tests/ -m "unit" --cov=src --cov-report=xml --cov-report=term-missing -v
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    name: Integration Tests
+    needs: [code-quality, unit-tests]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg unzip curl
+    
+    - name: Install Chrome
+      run: |
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    
+    - name: Install ChromeDriver
+      run: |
+        CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE)
+        wget -N http://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip
+        unzip chromedriver_linux64.zip
+        sudo mv chromedriver /usr/local/bin/chromedriver
+        sudo chmod +x /usr/local/bin/chromedriver
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run integration tests
+      run: |
+        pytest tests/integration/ -m "integration" -v --tb=short
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: integration-test-results
+        path: test-results.xml
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    name: Performance Tests
+    needs: [unit-tests]
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[perf]')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg unzip curl
+    
+    - name: Install Chrome
+      run: |
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    
+    - name: Install ChromeDriver
+      run: |
+        CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE)
+        wget -N http://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip
+        unzip chromedriver_linux64.zip
+        sudo mv chromedriver /usr/local/bin/chromedriver
+        sudo chmod +x /usr/local/bin/chromedriver
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install psutil  # For performance monitoring
+    
+    - name: Run performance tests
+      run: |
+        pytest tests/performance/ -m "performance" -v --tb=short
+    
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-test-results
+        path: performance-results/
+
+  docker-tests:
+    runs-on: ubuntu-latest
+    name: Docker Integration Tests
+    needs: [unit-tests]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Docker image
+      run: |
+        docker build -t av-metadata-scraper:test .
+    
+    - name: Test Docker image
+      run: |
+        # Create test directories
+        mkdir -p test-source test-target test-config
+        
+        # Create test video file
+        echo "fake video content" > test-source/SSIS-001.mp4
+        
+        # Create test config
+        cat > test-config/config.yaml << EOF
+        logging:
+          level: INFO
+          console: true
+          file: false
+        scanner:
+          source_directory: /app/source
+          supported_formats: ['.mp4', '.mkv', '.avi']
+        organizer:
+          target_directory: /app/target
+          naming_pattern: '{code}.{ext}'
+        downloader:
+          enabled: false
+        processing:
+          max_concurrent_files: 1
+        EOF
+        
+        # Run container with test data
+        docker run --rm \
+          -v $(pwd)/test-source:/app/source:ro \
+          -v $(pwd)/test-target:/app/target \
+          -v $(pwd)/test-config:/app/config \
+          -e CONFIG_FILE=/app/config/config.yaml \
+          av-metadata-scraper:test \
+          python -c "
+        from src.main_application import AVMetadataScraper
+        import asyncio
+        
+        async def test():
+            app = AVMetadataScraper('/app/config/config.yaml')
+            health = await app.health_check()
+            print(f'Health check: {health}')
+            return health['status'] in ['healthy', 'degraded']
+        
+        result = asyncio.run(test())
+        exit(0 if result else 1)
+        "
+
+  security-scan:
+    runs-on: ubuntu-latest
+    name: Security Scan
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety bandit
+    
+    - name: Run safety check
+      run: |
+        safety check -r requirements.txt
+    
+    - name: Run bandit security scan
+      run: |
+        bandit -r src/ -f json -o bandit-report.json
+    
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-scan-results
+        path: bandit-report.json
+
+  test-report:
+    runs-on: ubuntu-latest
+    name: Generate Test Report
+    needs: [unit-tests, integration-tests]
+    if: always()
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Generate comprehensive test report
+      run: |
+        pytest tests/ \
+          --cov=src \
+          --cov-report=html:htmlcov \
+          --cov-report=xml:coverage.xml \
+          --junit-xml=test-results.xml \
+          -v || true
+    
+    - name: Upload test report
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-report
+        path: |
+          htmlcov/
+          coverage.xml
+          test-results.xml
+    
+    - name: Comment PR with test results
+      uses: actions/github-script@v6
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // Read test results if available
+          let testSummary = 'Test results not available';
+          try {
+            if (fs.existsSync('test-results.xml')) {
+              testSummary = '✅ Tests completed. Check artifacts for detailed results.';
+            }
+          } catch (error) {
+            testSummary = '❌ Error reading test results';
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## Test Results\n\n${testSummary}\n\nView detailed results in the [Actions tab](${context.payload.repository.html_url}/actions/runs/${context.runId}).`
+          });

@@ -1,0 +1,185 @@
+services:
+  # Web界面服务
+  autojav-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: autojav-web
+    restart: unless-stopped
+    
+    ports:
+      - "${WEB_PORT:-5000}:5000"
+    
+    environment:
+      - FLASK_ENV=${FLASK_ENV:-production}
+      - SECRET_KEY=${SECRET_KEY:-autojav-secret-key-2024}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TZ=${TZ:-Asia/Shanghai}
+      # 内部通信
+      - SCRAPER_HOST=autojav-scraper
+      - SCRAPER_PORT=8000
+    
+    volumes:
+      # 配置目录
+      - ${CONFIG_DIR:-./config}:/app/config
+      # 日志目录
+      - ${LOGS_DIR:-./logs}:/app/logs
+      # 源文件目录（只读）
+      - ${SOURCE_DIR:-./source}:/app/source:ro
+      # 目标目录
+      - ${TARGET_DIR:-./organized}:/app/organized
+      # Web静态文件
+      - ./web:/app/web
+      # 源代码（用于导入）
+      - ./src:/app/src
+    
+    networks:
+      - autojav-network
+    
+    depends_on:
+      - autojav-scraper
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 主刮削服务
+  autojav-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: autojav-scraper
+    restart: unless-stopped
+    
+    environment:
+      # 基础配置
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CONFIG_FILE=/app/config/config.yaml
+      - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+      - TZ=${TZ:-Asia/Shanghai}
+      
+      # Chrome配置
+      - DISPLAY=:99
+      - CHROME_BIN=/usr/bin/google-chrome
+      - CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+      
+      # 用户权限
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      
+      # JavDB凭据（可选）
+      - JAVDB_USERNAME=${JAVDB_USERNAME:-}
+      - JAVDB_PASSWORD=${JAVDB_PASSWORD:-}
+      
+      # 处理配置
+      - MAX_CONCURRENT_FILES=${MAX_CONCURRENT_FILES:-2}
+      - MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS:-2}
+      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-2}
+      
+      # 代理配置（可选）
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      
+      # 功能开关
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+      - SAFE_MODE=${SAFE_MODE:-true}
+      - CREATE_METADATA_FILES=${CREATE_METADATA_FILES:-true}
+      - DOWNLOAD_IMAGES=${DOWNLOAD_IMAGES:-true}
+    
+    volumes:
+      # 源目录（只读）
+      - ${SOURCE_DIR:-./source}:/app/source:ro
+      # 目标目录（读写）
+      - ${TARGET_DIR:-./organized}:/app/target
+      # 配置目录
+      - ${CONFIG_DIR:-./config}:/app/config
+      # 日志目录
+      - ${LOGS_DIR:-./logs}:/app/logs
+      # Chrome用户数据（持久化会话）
+      - chrome-data:/app/.chrome-data
+    
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-2G}
+          cpus: '${CPU_LIMIT:-2.0}'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    # 安全选项
+    security_opt:
+      - no-new-privileges:true
+    
+    networks:
+      - autojav-network
+    
+    healthcheck:
+      test: ["CMD", "python", "/app/docker/healthcheck.py"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Nginx反向代理（可选，用于生产环境）
+  nginx:
+    image: nginx:alpine
+    container_name: autojav-nginx
+    restart: unless-stopped
+    
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_SSL_PORT:-443}:443"
+    
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/sites:/etc/nginx/sites-enabled:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-cache:/var/cache/nginx
+    
+    networks:
+      - autojav-network
+    
+    depends_on:
+      - autojav-web
+    
+    profiles:
+      - production
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# 命名卷
+volumes:
+  chrome-data:
+    driver: local
+  nginx-cache:
+    driver: local
+
+# 网络
+networks:
+  autojav-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

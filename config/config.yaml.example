@@ -1,0 +1,55 @@
+# AV Metadata Scraper Configuration Example
+# Copy this file to config.yaml and modify the settings below
+
+# Directory Settings
+directories:
+  source: "/path/to/your/video/files"  # Directory to scan for video files
+  target: "/path/to/organized/files"   # Directory to organize files
+
+# Login Credentials (optional but recommended for better results)
+credentials:
+  javdb:
+    username: "your_javdb_username"  # Your JavDB username
+    password: "your_javdb_password"  # Your JavDB password
+
+# Scraper Settings
+scraping:
+  priority: ["javdb", "javlibrary"]  # Order of scrapers to try (first has priority)
+  max_concurrent_files: 3            # Number of files to process simultaneously
+  retry_attempts: 3                  # Number of retry attempts for failed requests
+  timeout: 30                        # Request timeout in seconds
+
+# File Organization
+organization:
+  # Available placeholders: {actress}, {code}, {title}, {studio}, {year}, {ext}
+  naming_pattern: "{actress}/{code}/{code}.{ext}"
+  download_images: true              # Download cover and poster images
+  save_metadata: true                # Save metadata as JSON files
+
+# Browser Settings
+browser:
+  headless: true  # Run browser in headless mode (recommended for servers)
+  timeout: 30     # Browser operation timeout in seconds
+
+# Network Settings (optional)
+network:
+  proxy_url: ""  # HTTP/HTTPS proxy URL (leave empty to disable)
+  # Example: "http://proxy.example.com:8080"
+  # Example with auth: "http://user:pass@proxy.example.com:8080"
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Supported Video Extensions
+supported_extensions:
+  - ".mp4"
+  - ".mkv"
+  - ".avi"
+  - ".wmv"
+  - ".mov"
+  - ".flv"
+  - ".webm"
+  - ".m4v"
+  - ".ts"
+  - ".m2ts"

@@ -1,0 +1,35 @@
+# AV Metadata Scraper Configuration Template
+# Copy this file to config.yaml and modify the values as needed
+
+# Directory Configuration
+source_directory: '/path/to/source/videos'  # Directory containing video files to process
+target_directory: '/path/to/target/organized'  # Directory where organized files will be stored
+
+# Login Configuration (for JavDB)
+javdb_username: ''  # Your JavDB username (leave empty if not using JavDB)
+javdb_password: ''  # Your JavDB password (leave empty if not using JavDB)
+
+# Scraping Configuration
+scraper_priority:  # Priority order for scrapers (first one is tried first)
+  - javdb
+  - javlibrary
+max_concurrent_files: 3  # Maximum number of files to process simultaneously
+retry_attempts: 3  # Number of retry attempts for failed operations
+
+# File Naming Configuration
+# Available placeholders: {actress}, {code}, {title}, {ext}, {studio}, {release_date}
+naming_pattern: '{actress}/{code}/{code}.{ext}'
+
+# Browser Configuration
+headless_browser: true  # Run browser in headless mode (recommended for Docker)
+browser_timeout: 30  # Browser operation timeout in seconds
+
+# Network Configuration
+proxy_url: ''  # HTTP/HTTPS proxy URL (leave empty if not using proxy)
+
+# Feature Configuration
+download_images: true  # Download cover images and posters
+save_metadata: true  # Save metadata as JSON files
+
+# Logging Configuration
+log_level: 'INFO'  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
