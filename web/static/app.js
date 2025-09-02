@@ -5,6 +5,12 @@
 let socket = null;
 let currentConfig = {};
 let taskRunning = false;
+let monitoringEnabled = false;
+let monitoringInterval = null;
+
+// 声明历史相关函数（稍后定义）
+let loadHistory, searchHistory, refreshHistory, exportHistory, clearHistory, filterHistory, viewHistoryDetail;
+let loadStats;
 
 // 初始化
 document.addEventListener('DOMContentLoaded', function() {
@@ -15,7 +21,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 定时刷新
     setInterval(updateDashboard, 5000);
-    setInterval(checkTaskStatus, 2000);
 });
 
 // WebSocket连接
@@ -36,9 +41,7 @@ function initWebSocket() {
         appendLog(data);
     });
     
-    socket.on('task_progress', function(data) {
-        updateTaskProgress(data);
-    });
+    // Task progress 事件已废弃
 }
 
 // 更新连接状态
@@ -87,8 +90,19 @@ function showPage(pageName) {
             case 'config':
                 loadConfig();
                 break;
+            case 'history':
+                if (typeof loadHistory === 'function') {
+                    loadHistory();
+                } else {
+                    console.log('History function not yet loaded');
+                }
+                break;
             case 'stats':
-                loadStats();
+                if (typeof loadStats === 'function') {
+                    loadStats();
+                } else {
+                    console.log('Stats function not yet loaded');
+                }
                 break;
         }
     }
@@ -251,14 +265,19 @@ async function saveConfig() {
 }
 
 // 扫描文件
-async function scanFiles() {
+async function scanFiles(event) {
     try {
-        const scanBtn = event.target;
-        scanBtn.disabled = true;
-        scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>扫描中...';
+        const scanBtn = event ? event.target : document.querySelector('[onclick*="scanFiles"]');
+        if (scanBtn) {
+            scanBtn.disabled = true;
+            scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>刷新中...';
+        }
         
         const response = await fetch('/api/scan', {
-            method: 'POST'
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
         });
         
         const result = await response.json();
@@ -274,46 +293,256 @@ async function scanFiles() {
         console.error('扫描失败:', error);
         showToast('扫描失败', 'danger');
     } finally {
-        const scanBtn = event.target;
-        scanBtn.disabled = false;
-        scanBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 扫描文件';
+        const scanBtn = event ? event.target : document.querySelector('[onclick*="scanFiles"]');
+        if (scanBtn) {
+            scanBtn.disabled = false;
+            scanBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 刷新列表';
+        }
     }
 }
 
-// 显示扫描结果
+// 显示扫描结果（增强版文件列表）
 function displayScanResults(files) {
-    const container = document.getElementById('scan-results');
+    const tableBody = document.getElementById('file-list-body');
+    const table = document.getElementById('file-list-table');
+    const emptyState = document.getElementById('empty-state');
+    const selectAllBtn = document.getElementById('select-all-btn');
+    const deleteSelectedBtn = document.getElementById('delete-selected-btn');
+    const scrapeSelectedBtn = document.getElementById('scrape-selected-btn');
     
     if (!files || files.length === 0) {
-        container.innerHTML = '<p class="text-muted">未找到视频文件</p>';
+        table.style.display = 'none';
+        emptyState.style.display = 'block';
+        selectAllBtn.style.display = 'none';
+        deleteSelectedBtn.style.display = 'none';
+        scrapeSelectedBtn.style.display = 'none';
         return;
     }
     
+    // 显示表格和批量操作按钮
+    table.style.display = 'table';
+    emptyState.style.display = 'none';
+    selectAllBtn.style.display = 'inline-block';
+    deleteSelectedBtn.style.display = 'inline-block';
+    scrapeSelectedBtn.style.display = 'inline-block';
+    
+    // 存储文件数据用于后续操作
+    window.fileListData = files;
+    
     let html = '';
-    files.forEach(file => {
+    files.forEach((file, index) => {
         const codeClass = file.detected_code ? 'success' : 'warning';
         const codeText = file.detected_code || '未识别';
+        const fileId = `file-${index}`;
         
         html += `
-            <div class="file-item">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div>
-                        <strong>${file.filename}</strong>
-                        <br><small class="text-muted">${file.path}</small>
+            <tr id="${fileId}" data-index="${index}">
+                <td>
+                    <input type="checkbox" class="form-check-input file-checkbox" 
+                           data-index="${index}" onchange="updateSelectedCount()">
+                </td>
+                <td>
+                    <div class="file-name-container">
+                        <span class="file-name-display" id="name-${index}">${file.filename}</span>
+                        <input type="text" class="form-control form-control-sm rename-input" 
+                               id="rename-${index}" value="${file.filename}"
+                               onkeypress="handleRenameKeypress(event, ${index})"
+                               onblur="handleRenameBlur(event, ${index})">
                     </div>
-                    <div>
-                        <span class="badge bg-${codeClass} me-2">${codeText}</span>
-                        <span class="badge bg-secondary">${file.size_mb} MB</span>
+                    <small class="text-muted">${file.path}</small>
+                </td>
+                <td>${file.size_mb} MB</td>
+                <td>
+                    <span class="badge bg-${codeClass}">${codeText}</span>
+                </td>
+                <td>
+                    <div class="file-actions">
+                        <button class="btn btn-sm btn-outline-primary" onclick="renameFile(${index})" 
+                                title="重命名" id="rename-btn-${index}">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteFile(${index})" 
+                                title="删除">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-success" onclick="scrapeFile(${index})" 
+                                title="刮削" id="scrape-btn-${index}">
+                            <i class="bi bi-play-circle"></i> 刮削
+                        </button>
                     </div>
-                </div>
-            </div>
+                </td>
+            </tr>
         `;
     });
     
-    container.innerHTML = html;
+    tableBody.innerHTML = html;
 }
 
-// 开始任务
+// 刮削单个文件
+async function scrapeFile(index) {
+    const file = window.fileListData[index];
+    const scrapeBtn = document.getElementById(`scrape-btn-${index}`);
+    
+    try {
+        // 更新按钮状态
+        scrapeBtn.disabled = true;
+        scrapeBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>刮削中...';
+        
+        const response = await fetch('/api/scrape', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                file_path: file.path,
+                code: file.detected_code || null
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(`文件 ${file.filename} 刮削成功`, 'success');
+            // 更新行显示
+            const row = document.getElementById(`file-${index}`);
+            row.classList.add('table-success');
+            setTimeout(() => {
+                row.classList.remove('table-success');
+                // 刷新文件列表
+                scanFiles();
+            }, 2000);
+        } else {
+            showToast(`刮削失败: ${result.error}`, 'danger');
+        }
+        
+    } catch (error) {
+        console.error('刮削失败:', error);
+        showToast('刮削失败', 'danger');
+    } finally {
+        scrapeBtn.disabled = false;
+        scrapeBtn.innerHTML = '<i class="bi bi-play-circle"></i> 刮削';
+    }
+}
+
+// 批量刮削选中的文件
+async function scrapeSelectedFiles() {
+    const selectedFiles = [];
+    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+    
+    checkboxes.forEach(checkbox => {
+        const index = parseInt(checkbox.dataset.index);
+        selectedFiles.push(window.fileListData[index]);
+    });
+    
+    if (selectedFiles.length === 0) {
+        showToast('请选择要刮削的文件', 'warning');
+        return;
+    }
+    
+    const scrapeBtn = document.getElementById('scrape-selected-btn');
+    scrapeBtn.disabled = true;
+    scrapeBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>刮削中 (0/${selectedFiles.length})`;
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        scrapeBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>刮削中 (${i}/${selectedFiles.length})`;
+        
+        try {
+            const response = await fetch('/api/scrape', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    file_path: file.path,
+                    code: file.detected_code || null
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                successCount++;
+            } else {
+                failCount++;
+                console.error(`刮削失败 ${file.filename}: ${result.error}`);
+            }
+            
+        } catch (error) {
+            failCount++;
+            console.error(`刮削失败 ${file.filename}:`, error);
+        }
+    }
+    
+    scrapeBtn.disabled = false;
+    scrapeBtn.innerHTML = '<i class="bi bi-collection-play"></i> 批量刮削';
+    
+    showToast(`批量刮削完成: 成功 ${successCount} 个, 失败 ${failCount} 个`, 
+              failCount > 0 ? 'warning' : 'success');
+    
+    // 刷新文件列表
+    setTimeout(() => scanFiles(), 1000);
+}
+
+// 切换实时监控
+function toggleMonitoring() {
+    const monitorBtn = document.getElementById('monitor-btn');
+    
+    if (monitoringEnabled) {
+        // 停止监控
+        monitoringEnabled = false;
+        if (monitoringInterval) {
+            clearInterval(monitoringInterval);
+            monitoringInterval = null;
+        }
+        monitorBtn.innerHTML = '<i class="bi bi-eye"></i> 实时监控';
+        monitorBtn.classList.remove('btn-warning');
+        monitorBtn.classList.add('btn-secondary');
+        showToast('已停止实时监控', 'info');
+    } else {
+        // 开始监控
+        monitoringEnabled = true;
+        monitorBtn.innerHTML = '<i class="bi bi-eye-slash"></i> 停止监控';
+        monitorBtn.classList.remove('btn-secondary');
+        monitorBtn.classList.add('btn-warning');
+        
+        // 立即扫描一次
+        scanFiles();
+        
+        // 设置定时扫描（每5秒）
+        monitoringInterval = setInterval(() => {
+            if (monitoringEnabled) {
+                scanFiles();
+            }
+        }, 5000);
+        
+        showToast('已开启实时监控，每5秒自动刷新', 'success');
+    }
+}
+
+// 更新选中数量
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+    const deleteBtn = document.getElementById('delete-selected-btn');
+    const scrapeBtn = document.getElementById('scrape-selected-btn');
+    
+    if (checkboxes.length > 0) {
+        deleteBtn.disabled = false;
+        scrapeBtn.disabled = false;
+        deleteBtn.innerHTML = `<i class="bi bi-trash"></i> 删除选中 (${checkboxes.length})`;
+        scrapeBtn.innerHTML = `<i class="bi bi-collection-play"></i> 批量刮削 (${checkboxes.length})`;
+    } else {
+        deleteBtn.disabled = true;
+        scrapeBtn.disabled = true;
+        deleteBtn.innerHTML = '<i class="bi bi-trash"></i> 删除选中';
+        scrapeBtn.innerHTML = '<i class="bi bi-collection-play"></i> 批量刮削';
+    }
+}
+
+// 开始任务 (已废弃，保留以防旧代码调用)
 async function startTask() {
     try {
         const response = await fetch('/api/task/start', {
@@ -361,11 +590,9 @@ async function stopTask() {
     }
 }
 
-// 检查任务状态
+// 检查任务状态 (已废弃)
 async function checkTaskStatus() {
-    if (!taskRunning && document.getElementById('task-page').style.display === 'none') {
-        return;
-    }
+    return; // 任务管理页面已移除
     
     try {
         const response = await fetch('/api/task/status');
@@ -508,7 +735,7 @@ function clearLogs() {
 }
 
 // 加载统计信息
-async function loadStats() {
+loadStats = async function() {
     try {
         const response = await fetch('/api/stats');
         const stats = await response.json();
@@ -597,3 +824,832 @@ function showToast(message, type = 'info') {
         toastEl.remove();
     });
 }
+
+// ========== 文件管理功能 ==========
+
+// 全选/取消全选
+function selectAllFiles(checkbox) {
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = checkbox.checked;
+        const row = cb.closest('tr');
+        if (checkbox.checked) {
+            row.classList.add('selected');
+        } else {
+            row.classList.remove('selected');
+        }
+    });
+    updateSelectedCount();
+}
+
+// 切换全选状态
+function toggleSelectAll() {
+    const selectAllCheckbox = document.getElementById('select-all-checkbox');
+    selectAllCheckbox.checked = !selectAllCheckbox.checked;
+    selectAllFiles(selectAllCheckbox);
+}
+
+// 更新选中数量
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+    const deleteBtn = document.getElementById('delete-selected-btn');
+    const selectAllCheckbox = document.getElementById('select-all-checkbox');
+    const allCheckboxes = document.querySelectorAll('.file-checkbox');
+    
+    // 更新删除按钮状态
+    deleteBtn.disabled = checkboxes.length === 0;
+    
+    // 更新按钮文本
+    if (checkboxes.length > 0) {
+        deleteBtn.innerHTML = `<i class="bi bi-trash"></i> 删除选中 (${checkboxes.length})`;
+    } else {
+        deleteBtn.innerHTML = '<i class="bi bi-trash"></i> 删除选中';
+    }
+    
+    // 更新行的选中状态
+    allCheckboxes.forEach(cb => {
+        const row = cb.closest('tr');
+        if (cb.checked) {
+            row.classList.add('selected');
+        } else {
+            row.classList.remove('selected');
+        }
+    });
+    
+    // 更新全选框状态
+    if (allCheckboxes.length > 0) {
+        selectAllCheckbox.checked = checkboxes.length === allCheckboxes.length;
+        selectAllCheckbox.indeterminate = checkboxes.length > 0 && checkboxes.length < allCheckboxes.length;
+    }
+}
+
+// 用于跟踪是否正在保存重命名
+let isRenamingSaving = false;
+
+// 重命名文件
+function renameFile(index) {
+    console.log('renameFile called with index:', index);
+    const nameDisplay = document.getElementById(`name-${index}`);
+    const renameInput = document.getElementById(`rename-${index}`);
+    const renameBtn = document.getElementById(`rename-btn-${index}`);
+    
+    console.log('Elements found:', {nameDisplay, renameInput, renameBtn});
+    console.log('Input has active class:', renameInput?.classList.contains('active'));
+    
+    if (renameInput.classList.contains('active')) {
+        // 保存重命名
+        console.log('Saving rename...');
+        isRenamingSaving = true;
+        saveRename(index);
+    } else {
+        // 进入编辑模式
+        console.log('Entering edit mode...');
+        nameDisplay.classList.add('editing');
+        renameInput.classList.add('active');
+        renameInput.focus();
+        renameInput.select();
+        renameBtn.innerHTML = '<i class="bi bi-check"></i>';
+        
+        // 设置当前编辑的索引
+        renameInput.dataset.editing = 'true';
+    }
+}
+
+// 处理重命名键盘事件
+function handleRenameKeypress(event, index) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        isRenamingSaving = true;
+        saveRename(index);
+    } else if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelRename(index);
+    }
+}
+
+// 处理重命名输入框失焦
+function handleRenameBlur(event, index) {
+    // 延迟执行，让点击事件先触发
+    setTimeout(() => {
+        if (!isRenamingSaving) {
+            cancelRename(index);
+        }
+        isRenamingSaving = false;
+    }, 200);
+}
+
+// 保存重命名
+async function saveRename(index) {
+    const file = window.fileListData[index];
+    const renameInput = document.getElementById(`rename-${index}`);
+    const newName = renameInput.value.trim();
+    
+    if (!newName || newName === file.filename) {
+        cancelRename(index);
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/rename', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                old_path: file.path,
+                new_name: newName
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // 更新文件数据
+            const oldFilename = file.filename;
+            file.filename = newName;
+            // 更新文件路径
+            file.path = file.path.replace(oldFilename, newName);
+            
+            const nameDisplay = document.getElementById(`name-${index}`);
+            nameDisplay.textContent = newName;
+            
+            // 更新表格中显示的路径
+            const pathDisplay = renameInput.closest('td').querySelector('small.text-muted');
+            if (pathDisplay) {
+                pathDisplay.textContent = file.path;
+            }
+            
+            showToast(`文件重命名成功`, 'success');
+            cancelRename(index);
+            isRenamingSaving = false;
+        } else {
+            showToast(`重命名失败: ${result.error}`, 'danger');
+            isRenamingSaving = false;
+        }
+    } catch (error) {
+        console.error('重命名失败:', error);
+        showToast('重命名失败', 'danger');
+        isRenamingSaving = false;
+        cancelRename(index);
+    }
+}
+
+// 取消重命名
+function cancelRename(index) {
+    const nameDisplay = document.getElementById(`name-${index}`);
+    const renameInput = document.getElementById(`rename-${index}`);
+    const renameBtn = document.getElementById(`rename-btn-${index}`);
+    const file = window.fileListData[index];
+    
+    nameDisplay.classList.remove('editing');
+    renameInput.classList.remove('active');
+    renameInput.value = file.filename;
+    renameBtn.innerHTML = '<i class="bi bi-pencil"></i>';
+    renameInput.dataset.editing = 'false';
+    isRenamingSaving = false;
+}
+
+// 删除单个文件
+async function deleteFile(index) {
+    const file = window.fileListData[index];
+    
+    if (!confirm(`确定要删除文件 "${file.filename}" 吗？`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                paths: [file.path]
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // 从列表中移除
+            document.getElementById(`file-${index}`).remove();
+            window.fileListData.splice(index, 1);
+            
+            showToast('文件删除成功', 'success');
+            
+            // 如果没有文件了，显示空状态
+            if (window.fileListData.length === 0) {
+                document.getElementById('file-list-table').style.display = 'none';
+                document.getElementById('empty-state').style.display = 'block';
+                document.getElementById('select-all-btn').style.display = 'none';
+                document.getElementById('delete-selected-btn').style.display = 'none';
+            }
+        } else {
+            showToast(`删除失败: ${result.error}`, 'danger');
+        }
+    } catch (error) {
+        console.error('删除失败:', error);
+        showToast('删除失败', 'danger');
+    }
+}
+
+// 批量删除选中的文件
+async function deleteSelectedFiles() {
+    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+    
+    if (checkboxes.length === 0) {
+        showToast('请先选择要删除的文件', 'warning');
+        return;
+    }
+    
+    if (!confirm(`确定要删除选中的 ${checkboxes.length} 个文件吗？`)) {
+        return;
+    }
+    
+    const paths = [];
+    const indices = [];
+    
+    checkboxes.forEach(cb => {
+        const index = parseInt(cb.dataset.index);
+        const file = window.fileListData[index];
+        paths.push(file.path);
+        indices.push(index);
+    });
+    
+    try {
+        const response = await fetch('/api/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                paths: paths
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // 从大到小排序索引，这样删除时不会影响其他索引
+            indices.sort((a, b) => b - a);
+            
+            // 删除元素和数据
+            indices.forEach(index => {
+                document.getElementById(`file-${index}`).remove();
+                window.fileListData.splice(index, 1);
+            });
+            
+            showToast(`成功删除 ${checkboxes.length} 个文件`, 'success');
+            
+            // 重新扫描以刷新列表
+            scanFiles();
+        } else {
+            showToast(`批量删除失败: ${result.error}`, 'danger');
+        }
+    } catch (error) {
+        console.error('批量删除失败:', error);
+        showToast('批量删除失败', 'danger');
+    }
+}
+
+// 处理单个文件
+async function processFile(index) {
+    const file = window.fileListData[index];
+    
+    try {
+        const response = await fetch('/api/process', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                files: [{
+                    path: file.path,
+                    filename: file.filename,
+                    detected_code: file.detected_code,
+                    size: file.size_mb * 1024 * 1024
+                }]
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(`文件 "${file.filename}" 处理成功`, 'success');
+            
+            // 如果文件被移动了，从列表中移除
+            if (result.results && result.results[0] && result.results[0].success) {
+                document.getElementById(`file-${index}`).remove();
+                window.fileListData.splice(index, 1);
+            }
+        } else {
+            showToast(`处理失败: ${result.error}`, 'danger');
+        }
+    } catch (error) {
+        console.error('处理文件失败:', error);
+        showToast('处理文件失败', 'danger');
+    }
+}
+
+// ==================== JavDB登录相关功能 ====================
+
+// 检查Cookie状态
+async function checkCookieStatus() {
+    try {
+        const response = await fetch('/api/javdb/cookie-status');
+        const result = await response.json();
+        
+        if (result.success && result.status) {
+            const status = result.status;
+            const statusCard = document.getElementById('cookie-status-card');
+            const statusText = document.getElementById('cookie-status-text');
+            const cookieDetails = document.getElementById('cookie-details');
+            
+            if (status.exists) {
+                if (status.valid) {
+                    statusCard.className = 'card border-success';
+                    statusText.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> Cookies有效';
+                    statusText.className = 'card-text mb-0 text-success';
+                } else {
+                    statusCard.className = 'card border-warning';
+                    statusText.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning"></i> Cookies可能已过期';
+                    statusText.className = 'card-text mb-0 text-warning';
+                }
+                
+                // 显示详细信息
+                if (status.timestamp) {
+                    document.getElementById('cookie-timestamp').textContent = new Date(status.timestamp).toLocaleString();
+                }
+                if (status.cookie_count !== undefined) {
+                    document.getElementById('cookie-count').textContent = status.cookie_count;
+                }
+                if (status.age_days !== undefined) {
+                    document.getElementById('cookie-age').textContent = `${status.age_days} 天`;
+                }
+                cookieDetails.style.display = 'block';
+            } else {
+                statusCard.className = 'card border-secondary';
+                statusText.innerHTML = '<i class="bi bi-x-circle text-secondary"></i> 未找到保存的Cookies';
+                statusText.className = 'card-text mb-0 text-secondary';
+                cookieDetails.style.display = 'none';
+            }
+        }
+    } catch (error) {
+        console.error('获取Cookie状态失败:', error);
+        showToast('获取Cookie状态失败', 'danger');
+    }
+}
+
+// 执行JavDB登录
+async function performJavDBLogin() {
+    const loginBtn = document.getElementById('login-btn');
+    const originalText = loginBtn.innerHTML;
+    
+    try {
+        // 禁用按钮并显示加载状态
+        loginBtn.disabled = true;
+        loginBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>生成登录链接...';
+        
+        // 发起登录请求（使用URL方式）
+        const response = await fetch('/api/javdb/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                method: 'url'  // 使用URL方式
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success && result.method === 'url') {
+            // 显示登录指引
+            const instructions = `
+                <div class="alert alert-info">
+                    <h5>🔐 JavDB 登录步骤</h5>
+                    <ol>
+                        <li>复制以下文件路径：<br>
+                            <code>${result.html_file}</code>
+                            <button class="btn btn-sm btn-secondary ms-2" onclick="copyToClipboard('${result.html_file}')">复制</button>
+                        </li>
+                        <li>在主机浏览器中打开该文件（file://开头）</li>
+                        <li>或直接访问JavDB：<br>
+                            <a href="${result.login_url}" target="_blank">${result.login_url}</a>
+                        </li>
+                        <li>登录成功后手动保存Cookies</li>
+                    </ol>
+                    <p class="mb-0">Token: <code>${result.token}</code></p>
+                </div>
+            `;
+            
+            // 显示指引在模态框中
+            const modalBody = document.querySelector('#loginModal .modal-body');
+            modalBody.innerHTML = instructions;
+            
+            const loginModal = new bootstrap.Modal(document.getElementById('loginModal'));
+            loginModal.show();
+            
+            showToast('登录链接已生成，请按照指引完成登录', 'info');
+        } else if (result.success) {
+            showToast('登录成功！Cookies已保存', 'success');
+            // 刷新Cookie状态
+            await checkCookieStatus();
+        } else {
+            showToast(result.error || '登录失败', 'danger');
+        }
+        
+    } catch (error) {
+        console.error('登录失败:', error);
+        showToast('登录请求失败', 'danger');
+    } finally {
+        // 恢复按钮状态
+        loginBtn.disabled = false;
+        loginBtn.innerHTML = originalText;
+    }
+}
+
+// 验证Cookies
+async function verifyCookies() {
+    const verifyBtn = document.getElementById('verify-btn');
+    const originalText = verifyBtn.innerHTML;
+    
+    try {
+        // 显示加载状态
+        verifyBtn.disabled = true;
+        verifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>验证中...';
+        
+        const response = await fetch('/api/javdb/verify-cookies', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            if (result.valid) {
+                showToast('Cookies验证成功，可以正常使用', 'success');
+            } else {
+                showToast('Cookies无效或已过期，请重新登录', 'warning');
+            }
+            // 刷新状态
+            await checkCookieStatus();
+        } else {
+            showToast('验证失败: ' + result.error, 'danger');
+        }
+        
+    } catch (error) {
+        console.error('验证失败:', error);
+        showToast('验证请求失败', 'danger');
+    } finally {
+        // 恢复按钮状态
+        verifyBtn.disabled = false;
+        verifyBtn.innerHTML = originalText;
+    }
+}
+
+// 清除Cookies
+async function clearCookies() {
+    if (!confirm('确定要清除所有保存的JavDB Cookies吗？清除后需要重新登录。')) {
+        return;
+    }
+    
+    const clearBtn = document.getElementById('clear-btn');
+    const originalText = clearBtn.innerHTML;
+    
+    try {
+        // 显示加载状态
+        clearBtn.disabled = true;
+        clearBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>清除中...';
+        
+        const response = await fetch('/api/javdb/clear-cookies', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('Cookies已清除', 'success');
+            // 刷新状态
+            await checkCookieStatus();
+        } else {
+            showToast('清除失败: ' + result.error, 'danger');
+        }
+        
+    } catch (error) {
+        console.error('清除失败:', error);
+        showToast('清除请求失败', 'danger');
+    } finally {
+        // 恢复按钮状态
+        clearBtn.disabled = false;
+        clearBtn.innerHTML = originalText;
+    }
+}
+
+// 复制到剪贴板
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('已复制到剪贴板', 'success');
+    }).catch(err => {
+        console.error('复制失败:', err);
+        showToast('复制失败，请手动复制', 'warning');
+    });
+}
+
+// 当切换到JavDB页面时，自动检查Cookie状态
+document.addEventListener('DOMContentLoaded', function() {
+    const navLinks = document.querySelectorAll('.nav-link[data-page="javdb"]');
+    navLinks.forEach(link => {
+        link.addEventListener('click', function() {
+            setTimeout(() => {
+                checkCookieStatus();
+            }, 100);
+        });
+    });
+
+// ==================== 历史记录管理 ====================
+
+let historyData = [];
+let currentHistoryPage = 1;
+const historyPageSize = 20;
+
+// 加载历史记录
+loadHistory = async function(search = '', status = '') {
+    try {
+        let url = '/api/history?limit=1000';
+        if (search) {
+            url += `&search=${encodeURIComponent(search)}`;
+        }
+        if (status) {
+            url += `&status=${status}`;
+        }
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.success) {
+            historyData = data.entries || [];
+            displayHistory();
+            updateHistoryStats();
+        }
+    } catch (error) {
+        console.error('加载历史记录失败:', error);
+        showToast('加载历史记录失败', 'error');
+    }
+}
+
+// 显示历史记录
+function displayHistory() {
+    const tbody = document.getElementById('history-tbody');
+    if (!tbody) return;
+    
+    // 计算分页
+    const startIndex = (currentHistoryPage - 1) * historyPageSize;
+    const endIndex = startIndex + historyPageSize;
+    const pageData = historyData.slice(startIndex, endIndex);
+    
+    if (pageData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无记录</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = pageData.map(entry => {
+        const statusBadge = getStatusBadge(entry.status);
+        const processTime = new Date(entry.process_time).toLocaleString('zh-CN');
+        const actresses = entry.actresses ? entry.actresses.slice(0, 3).join(', ') : '';
+        
+        return `
+            <tr>
+                <td>${processTime}</td>
+                <td>${statusBadge}</td>
+                <td title="${entry.original_path}">${entry.original_filename}</td>
+                <td>${entry.detected_code || '-'}</td>
+                <td title="${entry.new_path || ''}">${entry.new_filename || '-'}</td>
+                <td>${entry.title || '-'}</td>
+                <td>${actresses || '-'}</td>
+                <td>
+                    <button class="btn btn-sm btn-info" onclick="viewHistoryDetail('${btoa(unescape(encodeURIComponent(JSON.stringify(entry))))}')">
+                        <i class="bi bi-eye"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    // 更新分页控件
+    updateHistoryPagination();
+}
+
+// 获取状态徽章
+function getStatusBadge(status) {
+    const badges = {
+        'success': '<span class="badge bg-success">成功</span>',
+        'failed': '<span class="badge bg-danger">失败</span>',
+        'partial': '<span class="badge bg-warning">部分</span>',
+        'skipped': '<span class="badge bg-secondary">跳过</span>'
+    };
+    return badges[status] || '<span class="badge bg-secondary">未知</span>';
+}
+
+// 更新历史统计
+async function updateHistoryStats() {
+    try {
+        const response = await fetch('/api/history/stats');
+        const data = await response.json();
+        
+        if (data.success && data.stats) {
+            const stats = data.stats;
+            document.getElementById('history-total').textContent = stats.total_processed || 0;
+            document.getElementById('history-success').textContent = stats.successful || 0;
+            document.getElementById('history-failed').textContent = stats.failed || 0;
+            document.getElementById('history-success-rate').textContent = 
+                `${(stats.success_rate || 0).toFixed(1)}%`;
+        }
+    } catch (error) {
+        console.error('获取历史统计失败:', error);
+    }
+}
+
+// 更新分页控件
+function updateHistoryPagination() {
+    const totalPages = Math.ceil(historyData.length / historyPageSize);
+    const pagination = document.getElementById('history-pagination');
+    if (!pagination) return;
+    
+    let html = '';
+    
+    // 上一页
+    html += `
+        <li class="page-item ${currentHistoryPage === 1 ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="changeHistoryPage(${currentHistoryPage - 1}); return false;">
+                上一页
+            </a>
+        </li>
+    `;
+    
+    // 页码
+    for (let i = 1; i <= Math.min(totalPages, 10); i++) {
+        html += `
+            <li class="page-item ${i === currentHistoryPage ? 'active' : ''}">
+                <a class="page-link" href="#" onclick="changeHistoryPage(${i}); return false;">
+                    ${i}
+                </a>
+            </li>
+        `;
+    }
+    
+    // 下一页
+    html += `
+        <li class="page-item ${currentHistoryPage === totalPages ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="changeHistoryPage(${currentHistoryPage + 1}); return false;">
+                下一页
+            </a>
+        </li>
+    `;
+    
+    pagination.innerHTML = html;
+}
+
+// 切换页面
+function changeHistoryPage(page) {
+    const totalPages = Math.ceil(historyData.length / historyPageSize);
+    if (page < 1 || page > totalPages) return;
+    
+    currentHistoryPage = page;
+    displayHistory();
+}
+
+// 搜索历史
+searchHistory = function() {
+    const searchInput = document.getElementById('history-search');
+    const search = searchInput ? searchInput.value : '';
+    const filterSelect = document.getElementById('history-filter');
+    const status = filterSelect ? filterSelect.value : '';
+    
+    currentHistoryPage = 1;
+    loadHistory(search, status);
+}
+
+// 筛选历史
+filterHistory = function() {
+    searchHistory();
+}
+
+// 刷新历史
+refreshHistory = function() {
+    currentHistoryPage = 1;
+    loadHistory();
+    showToast('历史记录已刷新', 'success');
+}
+
+// 确保函数在全局作用域可用
+window.refreshHistory = refreshHistory;
+window.searchHistory = searchHistory;
+window.exportHistory = exportHistory;
+window.clearHistory = clearHistory;
+window.filterHistory = filterHistory;
+window.loadHistory = loadHistory;
+window.viewHistoryDetail = viewHistoryDetail;
+
+// 清空历史
+clearHistory = async function() {
+    if (!confirm('确定要清空所有历史记录吗？')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/history/clear', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast('历史记录已清空', 'success');
+            loadHistory();
+        } else {
+            showToast('清空失败: ' + result.error, 'danger');
+        }
+    } catch (error) {
+        console.error('清空历史失败:', error);
+        showToast('清空历史失败', 'danger');
+    }
+}
+
+// 导出历史
+exportHistory = async function() {
+    try {
+        window.location.href = '/api/history/export';
+        showToast('开始导出历史记录', 'success');
+    } catch (error) {
+        console.error('导出失败:', error);
+        showToast('导出失败', 'error');
+    }
+}
+
+// 查看详情
+viewHistoryDetail = function(encodedData) {
+    try {
+        const entry = JSON.parse(decodeURIComponent(escape(atob(encodedData))));
+        
+        let detailHtml = `
+            <div class="modal fade" id="historyDetailModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">处理详情</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <table class="table">
+                                <tr><td width="30%"><strong>原始文件名:</strong></td><td>${entry.original_filename}</td></tr>
+                                <tr><td><strong>原始路径:</strong></td><td>${entry.original_path}</td></tr>
+                                <tr><td><strong>文件大小:</strong></td><td>${(entry.file_size_mb || 0).toFixed(2)} MB</td></tr>
+                                <tr><td><strong>处理时间:</strong></td><td>${new Date(entry.process_time).toLocaleString('zh-CN')}</td></tr>
+                                <tr><td><strong>处理状态:</strong></td><td>${getStatusBadge(entry.status)}</td></tr>
+                                <tr><td><strong>识别代码:</strong></td><td>${entry.detected_code || '-'}</td></tr>
+                                <tr><td><strong>新文件名:</strong></td><td>${entry.new_filename || '-'}</td></tr>
+                                <tr><td><strong>新路径:</strong></td><td>${entry.new_path || '-'}</td></tr>
+                                <tr><td><strong>标题:</strong></td><td>${entry.title || '-'}</td></tr>
+                                <tr><td><strong>演员:</strong></td><td>${entry.actresses ? entry.actresses.join(', ') : '-'}</td></tr>
+                                <tr><td><strong>制作商:</strong></td><td>${entry.studio || '-'}</td></tr>
+                                <tr><td><strong>发行日期:</strong></td><td>${entry.release_date || '-'}</td></tr>
+                                <tr><td><strong>类别:</strong></td><td>${entry.genres ? entry.genres.join(', ') : '-'}</td></tr>
+                                ${entry.error_message ? `<tr><td><strong>错误信息:</strong></td><td class="text-danger">${entry.error_message}</td></tr>` : ''}
+                            </table>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // 移除旧的模态框
+        const oldModal = document.getElementById('historyDetailModal');
+        if (oldModal) {
+            oldModal.remove();
+        }
+        
+        // 添加新的模态框
+        document.body.insertAdjacentHTML('beforeend', detailHtml);
+        
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('historyDetailModal'));
+        modal.show();
+        
+    } catch (error) {
+        console.error('显示详情失败:', error);
+        showToast('显示详情失败', 'error');
+    }
+}
+});

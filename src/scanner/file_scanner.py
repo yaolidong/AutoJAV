@@ -8,37 +8,51 @@ from typing import List, Optional, Set
 from datetime import datetime
 
 from ..models.video_file import VideoFile
+from ..utils.pattern_manager import PatternManager
 
 
 class FileScanner:
     """Scans directories for video files and extracts metadata."""
     
-    def __init__(self, source_directory: str, supported_formats: List[str]):
+    def __init__(self, source_directory: str, supported_formats: List[str], use_pattern_manager: bool = True):
         """
         Initialize the file scanner.
         
         Args:
             source_directory: Directory to scan for video files
             supported_formats: List of supported video file extensions
+            use_pattern_manager: Whether to use PatternManager for code extraction
         """
         self.source_directory = Path(source_directory)
         self.supported_formats = [fmt.lower() for fmt in supported_formats]
         self.logger = logging.getLogger(__name__)
+        self.use_pattern_manager = use_pattern_manager
         
-        # Common AV code patterns
+        # Initialize pattern manager if requested
+        if self.use_pattern_manager:
+            try:
+                # PatternManager will automatically find the correct path
+                self.pattern_manager = PatternManager()
+                self.logger.info("Using PatternManager for code extraction")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize PatternManager: {e}, falling back to built-in patterns")
+                self.use_pattern_manager = False
+        
+        # Common AV code patterns (fallback if PatternManager not available)
+        # Updated patterns to match both hyphen and space after cleaning
         self.code_patterns = [
-            # Standard patterns like ABC-123, ABCD-123
-            r'([A-Z]{2,5})-?(\d{3,4})',
+            # Standard patterns like ABC-123, ABCD-123 (also matches with space)
+            r'([A-Z]{2,5})[\s\-]?(\d{3,4})',
             # Patterns with numbers in prefix like 1PON-123456
-            r'(\d+[A-Z]+)-?(\d+)',
+            r'(\d+[A-Z]+)[\s\-]?(\d+)',
             # FC2 patterns like FC2-PPV-123456
-            r'(FC2)-?(PPV)?-?(\d+)',
+            r'(FC2)[\s\-]?(PPV)?[\s\-]?(\d+)',
             # Carib patterns like 123456-789
-            r'(\d{6})-(\d{3})',
+            r'(\d{6})[\s\-](\d{3})',
             # Tokyo Hot patterns like n1234
-            r'(n)(\d{4})',
+            r'(n)\s?(\d{4})',
             # Heydouga patterns like 4017-PPV123
-            r'(\d{4})-?(PPV)?(\d+)',
+            r'(\d{4})[\s\-]?(PPV)?(\d+)',
         ]
         
         # Compile regex patterns for better performance
@@ -206,6 +220,13 @@ class FileScanner:
         Returns:
             Extracted code or None if no code found
         """
+        # Use PatternManager if available
+        if self.use_pattern_manager and hasattr(self, 'pattern_manager'):
+            code = self.pattern_manager.extract_code(filename)
+            if code:
+                return code
+        
+        # Fallback to built-in patterns
         # Remove file extension
         name_without_ext = Path(filename).stem
         
@@ -257,8 +278,9 @@ class FileScanner:
         for suffix_pattern in suffixes_to_remove:
             cleaned = re.sub(suffix_pattern, '', cleaned, flags=re.IGNORECASE)
         
-        # Replace common separators with spaces
-        cleaned = re.sub(r'[_\-\.]', ' ', cleaned)
+        # Replace underscores and dots with spaces, but preserve hyphens between letters and numbers
+        # This helps maintain the structure of codes like JUL-777
+        cleaned = re.sub(r'[_\.]', ' ', cleaned)
         
         # Remove extra whitespace
         cleaned = ' '.join(cleaned.split())
@@ -283,11 +305,15 @@ class FileScanner:
             
             # Handle special cases
             if prefix.upper() == 'FC2':
-                # FC2-PPV-123456 format
+                # FC2-PPV-123456 or FC2-123456 format
                 if len(groups) >= 3 and groups[2]:
-                    return f"FC2-PPV-{groups[2]}"
+                    # If PPV is captured in groups[1], number is in groups[2]
+                    if groups[1] and groups[1].upper() == 'PPV':
+                        return f"FC2-PPV-{groups[2]}"
+                    else:
+                        return f"FC2-PPV-{groups[2]}"
                 else:
-                    return f"FC2-{number}"
+                    return f"FC2-PPV-{number}"
             
             elif prefix.upper() == 'N':
                 # Tokyo Hot n1234 format

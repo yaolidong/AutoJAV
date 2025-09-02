@@ -402,6 +402,9 @@ class JavLibraryScraper(BaseScraper):
         """Extract actress names."""
         actresses = []
         
+        # Invalid actress names to filter out
+        invalid_names = ['Censored', 'censored', 'CENSORED', 'Uncensored', 'uncensored', 'UNCENSORED', 'Western', 'western', '暂无', '未知', 'Unknown', 'N/A', '-', '---']
+        
         # JavLibrary specific selectors for cast
         selectors = [
             '#video_cast .cast a',
@@ -413,7 +416,8 @@ class JavLibraryScraper(BaseScraper):
             elements = soup.select(selector)
             for elem in elements:
                 name = elem.get_text(strip=True)
-                if name and name not in actresses:
+                # Filter out invalid names
+                if name and name not in actresses and name not in invalid_names:
                     actresses.append(name)
         
         return actresses

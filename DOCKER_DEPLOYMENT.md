@@ -129,7 +129,9 @@ docker compose logs -f av-scraper
 | `SAFE_MODE` | `true` | Copy files instead of moving |
 | `DEBUG_MODE` | `false` | Enable debug logging |
 
-### Configuration File
+### Configuration Files
+
+#### Main Configuration (`config/config.yaml`)
 
 Edit `config/config.yaml` for detailed settings:
 
@@ -157,6 +159,12 @@ browser:
   headless: true
   timeout: 30
 
+# Watch Mode Settings
+watch_mode:
+  enabled: true
+  scan_interval: 10
+  cooldown_seconds: 5
+
 # Network Settings
 network:
   proxy_url: ""
@@ -164,6 +172,25 @@ network:
 # Logging
 logging:
   level: "INFO"
+```
+
+#### Pattern Recognition Rules (`config/patterns.json`)
+
+Manage code extraction patterns:
+
+```json
+{
+  "patterns": [
+    {
+      "name": "Standard AV Code",
+      "pattern": "([A-Z]{2,5})[\\s\\-]?(\\d{3,4})",
+      "format": "{0}-{1}",
+      "description": "Standard patterns like ABC-123, ABCD-123",
+      "enabled": true,
+      "priority": 1
+    }
+  ]
+}
 ```
 
 ## Deployment Options
@@ -218,6 +245,71 @@ services:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.custom.yml up -d
+```
+
+## Web Interface
+
+### Accessing the Web UI
+
+The application includes a web interface for management and monitoring:
+
+```bash
+# Default URL
+http://localhost:8080
+
+# Custom port (set in .env)
+WEB_PORT=9000
+http://localhost:9000
+```
+
+### Web UI Features
+
+#### Main Dashboard (`/`)
+- System status and statistics
+- File processing monitor
+- Configuration management
+- Real-time logs viewer
+
+#### Pattern Management (`/patterns`)
+- Add/edit/delete regex patterns
+- Real-time pattern testing
+- Priority management
+- Enable/disable patterns without deletion
+
+### Pattern Management API
+
+```bash
+# Get all patterns
+curl http://localhost:8080/api/patterns
+
+# Add new pattern
+curl -X POST http://localhost:8080/api/patterns \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Custom Pattern",
+    "pattern": "CUSTOM-(\\d{4})",
+    "format": "CUSTOM-{0}",
+    "description": "Custom pattern for special codes",
+    "enabled": true,
+    "priority": 10
+  }'
+
+# Test pattern
+curl -X POST http://localhost:8080/api/patterns/test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "pattern": "([A-Z]+)-(\\d+)",
+    "test_string": "ABC-123.mp4",
+    "format": "{0}-{1}"
+  }'
+
+# Extract code from filename
+curl -X POST http://localhost:8080/api/patterns/extract \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "JUL-777.mp4"}'
+
+# Delete pattern
+curl -X DELETE http://localhost:8080/api/patterns/Custom%20Pattern
 ```
 
 ## Management

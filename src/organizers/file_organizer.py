@@ -38,7 +38,8 @@ class FileOrganizer:
         create_metadata_files: bool = True,
         verify_file_integrity: bool = True,
         max_filename_length: int = 255,
-        safe_mode: bool = True
+        safe_mode: bool = True,
+        move_source_files: bool = False
     ):
         """
         Initialize the file organizer.
@@ -51,6 +52,7 @@ class FileOrganizer:
             verify_file_integrity: Whether to verify file integrity after moving
             max_filename_length: Maximum filename length (OS dependent)
             safe_mode: If True, copy files instead of moving them
+            move_source_files: If True and safe_mode is False, delete source files after successful move
         """
         self.target_directory = Path(target_directory)
         self.naming_pattern = naming_pattern
@@ -59,6 +61,7 @@ class FileOrganizer:
         self.verify_file_integrity = verify_file_integrity
         self.max_filename_length = max_filename_length
         self.safe_mode = safe_mode
+        self.move_source_files = move_source_files
         
         self.logger = logging.getLogger(__name__)
         
@@ -272,12 +275,19 @@ class FileOrganizer:
         Returns:
             Primary actress name (sanitized)
         """
+        # Invalid actress names that should not be used for folders
+        invalid_names = ['Censored', 'censored', 'CENSORED', 'Uncensored', 'uncensored', 'UNCENSORED', 'Western', 'western', '暂无', '未知', 'Unknown', 'N/A', '-', '---']
+        
         if not metadata.actresses:
             return "Unknown"
         
-        # Use first actress as primary
-        primary_actress = metadata.actresses[0]
-        return self._sanitize_filename(primary_actress)
+        # Find first valid actress name
+        for actress in metadata.actresses:
+            if actress and actress not in invalid_names:
+                return self._sanitize_filename(actress)
+        
+        # If all actress names are invalid, use default
+        return "Unknown"
     
     def _get_actresses_string(self, metadata: MovieMetadata) -> str:
         """

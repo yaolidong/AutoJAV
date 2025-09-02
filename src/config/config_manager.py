@@ -181,6 +181,17 @@ class ConfigManager:
         except (KeyError, TypeError):
             return default
     
+    def get_config_data(self) -> Dict[str, Any]:
+        """
+        Get the raw configuration data as a dictionary.
+        
+        Returns:
+            Dictionary with all configuration settings
+        """
+        if self._config_data is None:
+            self.load_config()
+        return self._config_data or {}
+    
     def get_config(self) -> Config:
         """
         Get the configuration as a Config object.

@@ -52,20 +52,14 @@ RUN apt-get update && apt-get install -y \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Google Chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
-    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list && \
-    apt-get update && \
-    apt-get install -y google-chrome-stable && \
+# Install Chromium instead of Chrome for better ARM compatibility
+RUN apt-get update && \
+    apt-get install -y chromium chromium-driver && \
     rm -rf /var/lib/apt/lists/*
 
-# Install ChromeDriver
-RUN CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE) && \
-    wget -O /tmp/chromedriver.zip http://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip && \
-    unzip /tmp/chromedriver.zip -d /tmp/ && \
-    mv /tmp/chromedriver /usr/local/bin/chromedriver && \
-    chmod +x /usr/local/bin/chromedriver && \
-    rm /tmp/chromedriver.zip
+# Create symlinks for compatibility
+RUN ln -s /usr/bin/chromium /usr/bin/google-chrome && \
+    ln -s /usr/bin/chromedriver /usr/local/bin/chromedriver
 
 # Copy virtual environment from builder stage
 COPY --from=builder /opt/venv /opt/venv
@@ -82,9 +76,10 @@ RUN mkdir -p /app/logs /app/config /app/source /app/target && \
 # Copy application code
 COPY --chown=appuser:appuser . /app/
 
-# Copy and setup entrypoint script
+# Copy and setup entrypoint scripts
 COPY --chown=appuser:appuser docker/startup.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+COPY --chown=appuser:appuser docker/startup_with_api.sh /app/entrypoint_api.sh
+RUN chmod +x /app/entrypoint.sh /app/entrypoint_api.sh
 
 # Install gosu for proper user switching
 RUN apt-get update && apt-get install -y gosu && rm -rf /var/lib/apt/lists/*
@@ -97,14 +92,14 @@ HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     DISPLAY=:99 \
-    CHROME_BIN=/usr/bin/google-chrome \
-    CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+    CHROME_BIN=/usr/bin/chromium \
+    CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-# Expose any ports if needed (none for this application)
-# EXPOSE 8080
+# Expose API port
+EXPOSE 5001
 
-# Set entrypoint
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Set entrypoint with API
+ENTRYPOINT ["/app/docker/startup_with_api.sh"]
 
-# Default command
-CMD ["python", "main.py"]
+# Default command (run API server)
+CMD ["python", "src/api_server.py"]

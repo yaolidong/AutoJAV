@@ -14,6 +14,7 @@ from .base_scraper import BaseScraper
 from ..models.movie_metadata import MovieMetadata
 from ..utils.webdriver_manager import WebDriverManager
 from ..utils.login_manager import LoginManager
+from ..utils.javdb_login import JavDBLoginManager
 
 
 class JavDBScraper(BaseScraper):
@@ -27,7 +28,8 @@ class JavDBScraper(BaseScraper):
         self,
         driver_manager: WebDriverManager,
         login_manager: Optional[LoginManager] = None,
-        use_login: bool = True
+        use_login: bool = True,
+        config_dir: str = "/app/config"
     ):
         """
         Initialize JavDB scraper.
@@ -36,12 +38,16 @@ class JavDBScraper(BaseScraper):
             driver_manager: WebDriver manager instance
             login_manager: Login manager for authentication
             use_login: Whether to use login for better access
+            config_dir: Directory for config and cookie files
         """
         super().__init__("JavDB")
         self.driver_manager = driver_manager
         self.login_manager = login_manager
         self.use_login = use_login
         self.logger = logging.getLogger(__name__)
+        
+        # Initialize JavDB login manager for cookie handling
+        self.javdb_login_manager = JavDBLoginManager(config_dir=config_dir)
         
         # Cache for availability check
         self._availability_cache = None
@@ -101,28 +107,68 @@ class JavDBScraper(BaseScraper):
     async def _ensure_logged_in(self) -> bool:
         """
         Ensure user is logged in if login is required.
+        First tries to use saved cookies, then falls back to LoginManager if available.
         
         Returns:
             True if logged in or login not required
         """
-        if not self.use_login or not self.login_manager:
+        if not self.use_login:
             return True
         
         try:
-            # Check if already logged in
-            if await self.login_manager.is_logged_in():
-                return True
+            # First, try to load and apply saved cookies
+            cookies = self.javdb_login_manager.load_cookies()
+            if cookies:
+                self.logger.info("Found saved JavDB cookies, applying them...")
+                
+                # Apply cookies to the current driver session
+                driver = self.driver_manager.driver
+                if driver:
+                    # Navigate to base URL first
+                    self.driver_manager.get_page(self.BASE_URL)
+                    
+                    # Apply each cookie
+                    for cookie in cookies:
+                        # Adjust cookie format for Selenium
+                        if 'sameSite' in cookie and cookie['sameSite'] == 'None':
+                            cookie['sameSite'] = 'Lax'
+                        try:
+                            driver.add_cookie(cookie)
+                        except Exception as e:
+                            self.logger.debug(f"Could not add cookie: {e}")
+                    
+                    # Refresh page to apply cookies
+                    driver.refresh()
+                    await asyncio.sleep(2)
+                    
+                    # Check if logged in
+                    try:
+                        logout_elements = driver.find_elements(By.XPATH, "//a[contains(@href, '/logout')]")
+                        if logout_elements:
+                            self.logger.info("Successfully logged in using saved cookies")
+                            return True
+                    except Exception:
+                        pass
             
-            # Attempt login
-            self.logger.info("Attempting JavDB login...")
-            success = await self.login_manager.login(self.LOGIN_URL)
-            
-            if success:
-                self.logger.info("JavDB login successful")
+            # If cookies didn't work or don't exist, try LoginManager
+            if self.login_manager:
+                # Check if already logged in
+                if await self.login_manager.is_logged_in():
+                    return True
+                
+                # Attempt login
+                self.logger.info("Attempting JavDB login via LoginManager...")
+                success = await self.login_manager.login(self.LOGIN_URL)
+                
+                if success:
+                    self.logger.info("JavDB login successful")
+                else:
+                    self.logger.warning("JavDB login failed, continuing without login")
+                
+                return success
             else:
-                self.logger.warning("JavDB login failed, continuing without login")
-            
-            return success
+                self.logger.warning("No valid cookies and no LoginManager available")
+                return False
             
         except Exception as e:
             self.logger.error(f"Login error: {e}")
@@ -439,6 +485,9 @@ class JavDBScraper(BaseScraper):
         """Extract actress names."""
         actresses = []
         
+        # Invalid actress names to filter out
+        invalid_names = ['Censored', 'censored', 'CENSORED', 'Uncensored', 'uncensored', 'UNCENSORED', 'Western', 'western', '暂无', '未知', 'Unknown', 'N/A', '-', '---']
+        
         # Look for actress links or names
         selectors = [
             'a[href*="/actors/"]',
@@ -451,7 +500,8 @@ class JavDBScraper(BaseScraper):
             elements = soup.select(selector)
             for elem in elements:
                 name = elem.get_text(strip=True)
-                if name and name not in actresses:
+                # Filter out invalid names
+                if name and name not in actresses and name not in invalid_names:
                     actresses.append(name)
         
         return actresses

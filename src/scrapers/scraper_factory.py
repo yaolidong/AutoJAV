@@ -6,7 +6,9 @@ from typing import List, Optional, Dict, Any
 from .base_scraper import BaseScraper
 from .javdb_scraper import JavDBScraper
 from .javlibrary_scraper import JavLibraryScraper
+from .javbus_scraper import JAVBusScraper
 from .metadata_scraper import MetadataScraper
+from .parallel_metadata_scraper import ParallelMetadataScraper
 from ..utils.webdriver_manager import WebDriverManager
 from ..utils.login_manager import LoginManager
 from ..utils.http_client import HttpClient
@@ -61,6 +63,34 @@ class ScraperFactory:
                 'javdb_password': None
             }
         }
+    
+    def create_parallel_metadata_scraper(
+        self,
+        webdriver_manager: Optional[WebDriverManager] = None,
+        http_client: Optional[HttpClient] = None
+    ) -> ParallelMetadataScraper:
+        """
+        Create a parallel metadata scraper that queries all sources simultaneously.
+        
+        Args:
+            webdriver_manager: Optional WebDriver manager instance
+            http_client: Optional HTTP client instance
+            
+        Returns:
+            Configured ParallelMetadataScraper instance
+        """
+        scrapers = self._create_scrapers(webdriver_manager, http_client)
+        
+        coordinator_config = self.config.get('coordinator', {})
+        
+        parallel_scraper = ParallelMetadataScraper(
+            scrapers=scrapers,
+            cache_duration_minutes=coordinator_config.get('cache_duration_minutes', 60),
+            parallel_timeout=coordinator_config.get('parallel_timeout', 30)
+        )
+        
+        self.logger.info(f"Created ParallelMetadataScraper with {len(scrapers)} scrapers")
+        return parallel_scraper
     
     def create_metadata_scraper(
         self,
@@ -169,6 +199,8 @@ class ScraperFactory:
             return self._create_javdb_scraper(scraper_config, webdriver_manager)
         elif scraper_name == 'javlibrary':
             return self._create_javlibrary_scraper(scraper_config, http_client)
+        elif scraper_name == 'javbus':
+            return self._create_javbus_scraper(scraper_config, http_client)
         else:
             self.logger.warning(f"Unknown scraper type: {scraper_name}")
             return None
@@ -193,17 +225,23 @@ class ScraperFactory:
             if webdriver_manager is None:
                 webdriver_config = self._get_webdriver_config()
                 webdriver_manager = WebDriverManager(**webdriver_config)
+                # Start the WebDriver
+                webdriver_manager.start_driver()
             
             # Create login manager if login is enabled
             login_manager = None
             if scraper_config.get('use_login', True):
                 login_manager = self._create_login_manager(webdriver_manager)
             
-            # Create JavDB scraper
+            # Get config directory from configuration
+            config_dir = self.config.get('directories', {}).get('config', '/app/config')
+            
+            # Create JavDB scraper with config_dir for cookie support
             javdb_scraper = JavDBScraper(
                 driver_manager=webdriver_manager,
                 login_manager=login_manager,
-                use_login=scraper_config.get('use_login', True)
+                use_login=scraper_config.get('use_login', True),
+                config_dir=config_dir
             )
             
             return javdb_scraper
@@ -243,6 +281,37 @@ class ScraperFactory:
             
         except Exception as e:
             self.logger.error(f"Failed to create JavLibrary scraper: {e}")
+            return None
+    
+    def _create_javbus_scraper(
+        self,
+        scraper_config: Dict[str, Any],
+        http_client: Optional[HttpClient] = None
+    ) -> Optional[JAVBusScraper]:
+        """
+        Create JAVBus scraper instance.
+        
+        Args:
+            scraper_config: JAVBus scraper configuration
+            http_client: HTTP client instance
+            
+        Returns:
+            Configured JAVBusScraper instance or None
+        """
+        try:
+            # Create HTTP client if not provided
+            if http_client is None:
+                http_config = self._get_http_client_config()
+                http_client = HttpClient(**http_config)
+            
+            # Create JAVBus scraper
+            javbus_scraper = JAVBusScraper(http_client=http_client)
+            
+            self.logger.debug("Created JAVBus scraper instance")
+            return javbus_scraper
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create JAVBus scraper: {e}")
             return None
     
     def _create_login_manager(self, webdriver_manager: WebDriverManager) -> Optional[LoginManager]:
@@ -356,6 +425,30 @@ class ScraperFactory:
             **default_login,
             **config_login
         }
+    
+    def get_scraper(self, scraper_name: str) -> Optional[BaseScraper]:
+        """
+        Get a single scraper instance by name.
+        
+        Args:
+            scraper_name: Name of the scraper ('javdb', 'javlibrary', 'javbus')
+            
+        Returns:
+            Configured scraper instance or None if not found
+        """
+        scraper_configs = self._get_scraper_configs()
+        
+        if scraper_name not in scraper_configs:
+            self.logger.error(f"Unknown scraper: {scraper_name}")
+            return None
+            
+        scraper_config = scraper_configs[scraper_name]
+        
+        if not scraper_config.get('enabled', True):
+            self.logger.warning(f"Scraper {scraper_name} is disabled")
+            return None
+        
+        return self._create_scraper(scraper_name, scraper_config)
     
     def get_available_scrapers(self) -> List[str]:
         """

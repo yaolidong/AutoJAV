@@ -6,6 +6,23 @@ services:
     container_name: av-metadata-scraper
     restart: unless-stopped
     
+    # Expose API port
+    ports:
+      - "5001:5001"
+    
+    # Volumes
+    volumes:
+      # Source directory (read-write for moving files)
+      - ${SOURCE_DIR:-./source}:/app/source
+      # Target directory (read-write)
+      - ${TARGET_DIR:-./organized}:/app/target
+      # Configuration directory (includes config.yaml and patterns.json)
+      - ${CONFIG_DIR:-./config}:/app/config
+      # Logs directory
+      - ${LOGS_DIR:-./logs}:/app/logs
+      # Chrome data directory for session persistence
+      - chrome_data:/app/.chrome-data
+    
     # Environment variables
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -30,24 +47,12 @@ services:
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       # Feature flags
       - DEBUG_MODE=${DEBUG_MODE:-false}
-      - SAFE_MODE=${SAFE_MODE:-true}
+      - SAFE_MODE=${SAFE_MODE:-false}
       - CREATE_METADATA_FILES=${CREATE_METADATA_FILES:-true}
       - DOWNLOAD_IMAGES=${DOWNLOAD_IMAGES:-true}
       - RESIZE_IMAGES=${RESIZE_IMAGES:-false}
       - CREATE_THUMBNAILS=${CREATE_THUMBNAILS:-false}
     
-    # Volume mounts
-    volumes:
-      # Source directory (read-only)
-      - ${SOURCE_DIR:-./source}:/app/source:ro
-      # Target directory (read-write)
-      - ${TARGET_DIR:-./organized}:/app/target
-      # Configuration directory
-      - ${CONFIG_DIR:-./config}:/app/config
-      # Logs directory
-      - ${LOGS_DIR:-./logs}:/app/logs
-      # Chrome user data (for session persistence)
-      - chrome-data:/app/.chrome-data
     
     # Resource limits
     deploy:
@@ -82,25 +87,37 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Optional: Web UI service (for future implementation)
-  # av-scraper-ui:
-  #   build:
-  #     context: ./ui
-  #     dockerfile: Dockerfile
-  #   container_name: av-scraper-ui
-  #   restart: unless-stopped
-  #   ports:
-  #     - "${UI_PORT:-8080}:8080"
-  #   environment:
-  #     - API_URL=http://av-scraper:8000
-  #   networks:
-  #     - av-scraper-network
-  #   depends_on:
-  #     - av-scraper
+  # Web UI service
+  av-scraper-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: av-scraper-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:5000"
+    environment:
+      - FLASK_APP=web_app.py
+      - PYTHONUNBUFFERED=1
+      - CONFIG_FILE=/app/config/config.yaml
+    volumes:
+      # Configuration directory (includes config.yaml and patterns.json)
+      - ${CONFIG_DIR:-./config}:/app/config
+      # Source directory
+      - ${SOURCE_DIR:-./source}:/app/source
+      # Target directory  
+      - ${TARGET_DIR:-./organized}:/app/target
+      # Logs directory
+      - ${LOGS_DIR:-./logs}:/app/logs
+    networks:
+      - av-scraper-network
+    depends_on:
+      - av-scraper
 
 # Named volumes
 volumes:
   chrome-data:
+  chrome_data:
     driver: local
 
 # Networks

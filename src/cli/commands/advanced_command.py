@@ -17,12 +17,28 @@ from ...models.video_file import VideoFile
 class AdvancedCommand(BaseCommand):
     """Commands for advanced features like progress persistence, duplicate detection, etc."""
     
+    @property
+    def name(self) -> str:
+        """Command name."""
+        return "advanced"
+    
+    @property
+    def description(self) -> str:
+        """Command description."""
+        return "Advanced features (progress persistence, duplicate detection, batch processing)"
+    
     def __init__(self):
         super().__init__()
         self.progress_persistence = get_progress_persistence()
         self.duplicate_detector = get_duplicate_detector()
         self.batch_processor = get_batch_processor()
         self.performance_monitor = get_performance_monitor()
+    
+    def add_parser(self, subparsers):
+        """Add command parser to subparsers."""
+        parser = self._create_parser(subparsers)
+        self.add_arguments(parser)
+        return parser
     
     def add_arguments(self, parser):
         """Add command line arguments."""
@@ -135,7 +151,7 @@ class AdvancedCommand(BaseCommand):
         # Clear history
         clear_history_parser = perf_subparsers.add_parser('clear', help='Clear performance history')
     
-    async def execute(self, args) -> Dict[str, Any]:
+    async def execute(self, args, app=None) -> Dict[str, Any]:
         """Execute the advanced command."""
         if args.advanced_action == 'progress':
             return await self._handle_progress_commands(args)

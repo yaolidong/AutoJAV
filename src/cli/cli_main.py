@@ -13,7 +13,7 @@ from ..main_application import AVMetadataScraper
 from .config_wizard import ConfigWizard
 from .commands import (
     ScanCommand, ProcessCommand, StatusCommand, StopCommand,
-    ConfigCommand, TestCommand, HealthCommand, StatsCommand
+    ConfigCommand, HealthCommand, StatsCommand
 )
 from .commands.advanced_command import AdvancedCommand
 
@@ -40,7 +40,6 @@ class AVScraperCLI:
             'status': StatusCommand(),
             'stop': StopCommand(),
             'config': ConfigCommand(),
-            'test': TestCommand(),
             'health': HealthCommand(),
             'stats': StatsCommand(),
             'advanced': AdvancedCommand(),

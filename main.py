@@ -34,14 +34,25 @@ def parse_arguments():
         help='Path to configuration file'
     )
     
+    parser.add_argument(
+        '--watch', '-w',
+        action='store_true',
+        help='Run in watch mode for continuous monitoring'
+    )
+    
     # Parse known args to avoid conflicts with CLI subcommands
     args, remaining = parser.parse_known_args()
     
     return args, remaining
 
 
-async def run_direct_mode(config_path=None):
-    """Run in direct mode - start processing immediately."""
+async def run_direct_mode(config_path=None, watch_mode=False):
+    """Run in direct mode - start processing immediately.
+    
+    Args:
+        config_path: Path to configuration file
+        watch_mode: Whether to run in continuous watch mode
+    """
     from src.main_application import AVMetadataScraper
     from src.utils.logging_config import LoggingConfig, LogLevel
     
@@ -57,7 +68,14 @@ async def run_direct_mode(config_path=None):
     try:
         # Create and start the application
         app = AVMetadataScraper(config_path)
-        await app.start()
+        
+        if watch_mode:
+            # Run in continuous watch mode
+            print("Starting in WATCH MODE - monitoring for new files...")
+            await app.start_watch_mode()
+        else:
+            # Run once and exit
+            await app.start()
         
     except KeyboardInterrupt:
         print("\nApplication interrupted by user")
@@ -87,7 +105,7 @@ async def main():
         sys.exit(exit_code)
     else:
         # Direct mode - start processing immediately
-        await run_direct_mode(args.config)
+        await run_direct_mode(args.config, args.watch)
 
 
 if __name__ == "__main__":

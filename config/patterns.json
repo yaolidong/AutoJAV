@@ -1,0 +1,52 @@
+{
+  "patterns": [
+    {
+      "name": "Standard AV Code",
+      "pattern": "([A-Z]{2,5})[\\s\\-]?(\\d{3,4})",
+      "format": "{0}-{1}",
+      "description": "Standard patterns like ABC-123, ABCD-123",
+      "enabled": true,
+      "priority": 1
+    },
+    {
+      "name": "Number Prefix Code",
+      "pattern": "(\\d+[A-Z]+)[\\s\\-]?(\\d+)",
+      "format": "{0}-{1}",
+      "description": "Patterns with numbers in prefix like 1PON-123456",
+      "enabled": true,
+      "priority": 2
+    },
+    {
+      "name": "FC2 Pattern",
+      "pattern": "(FC2)[\\s\\-]?(PPV)?[\\s\\-]?(\\d+)",
+      "format": "FC2-PPV-{2}",
+      "description": "FC2 patterns like FC2-PPV-123456",
+      "enabled": true,
+      "priority": 3
+    },
+    {
+      "name": "Carib Pattern",
+      "pattern": "(\\d{6})[\\s\\-](\\d{3})",
+      "format": "{0}-{1}",
+      "description": "Carib patterns like 123456-789",
+      "enabled": true,
+      "priority": 4
+    },
+    {
+      "name": "Tokyo Hot Pattern",
+      "pattern": "(n)\\s?(\\d{4})",
+      "format": "n{1}",
+      "description": "Tokyo Hot patterns like n1234",
+      "enabled": true,
+      "priority": 5
+    },
+    {
+      "name": "Heydouga Pattern",
+      "pattern": "(\\d{4})[\\s\\-]?(PPV)?(\\d+)",
+      "format": "{0}-{2}",
+      "description": "Heydouga patterns like 4017-PPV123",
+      "enabled": true,
+      "priority": 6
+    }
+  ]
+}

@@ -164,7 +164,7 @@ class PerformanceMonitor:
         # Monitoring state
         self.monitoring_active = False
         self.monitor_thread: Optional[threading.Thread] = None
-        self.stop_monitoring = threading.Event()
+        self.stop_monitoring_event = threading.Event()
 
         # Callbacks for real-time monitoring
         self.resource_callbacks: List[Callable[[ResourceSnapshot], None]] = []
@@ -188,7 +188,7 @@ class PerformanceMonitor:
             return
 
         self.monitoring_active = True
-        self.stop_monitoring.clear()
+        self.stop_monitoring_event.clear()
 
         # Take baseline snapshot
         self.baseline_snapshot = self._take_resource_snapshot()
@@ -207,7 +207,7 @@ class PerformanceMonitor:
             return
 
         self.monitoring_active = False
-        self.stop_monitoring.set()
+        self.stop_monitoring_event.set()
 
         if self.monitor_thread and self.monitor_thread.is_alive():
             self.monitor_thread.join(timeout=5.0)
@@ -336,7 +336,7 @@ class PerformanceMonitor:
 
     def _monitoring_loop(self) -> None:
         """Main monitoring loop."""
-        while self.monitoring_active and not self.stop_monitoring.wait(
+        while self.monitoring_active and not self.stop_monitoring_event.wait(
             self.monitoring_interval
         ):
             try:

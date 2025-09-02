@@ -77,9 +77,13 @@ init_config() {
 check_requirements() {
     log_info "Checking system requirements..."
     
-    # Check Chrome installation
-    if ! command -v google-chrome &> /dev/null; then
-        log_error "Google Chrome not found"
+    # Check Chrome/Chromium installation
+    if command -v chromium &> /dev/null; then
+        log_info "Chromium found"
+    elif command -v google-chrome &> /dev/null; then
+        log_info "Google Chrome found"
+    else
+        log_error "Chrome/Chromium not found"
         exit 1
     fi
     
@@ -114,12 +118,16 @@ setup_chrome() {
     mkdir -p /app/.chrome-data
     
     # Set Chrome environment variables
-    export CHROME_BIN=/usr/bin/google-chrome
-    export CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+    if command -v chromium &> /dev/null; then
+        export CHROME_BIN=/usr/bin/chromium
+    else
+        export CHROME_BIN=/usr/bin/google-chrome
+    fi
+    export CHROMEDRIVER_PATH=/usr/bin/chromedriver
     export DISPLAY=${DISPLAY:-:99}
     
     # Test Chrome installation
-    if google-chrome --version &> /dev/null; then
+    if $CHROME_BIN --version &> /dev/null; then
         log_success "Chrome setup completed"
     else
         log_error "Chrome setup failed"
@@ -136,11 +144,18 @@ setup_python() {
     export PYTHONUNBUFFERED=1
     
     # Test Python imports
-    if python -c "import sys; sys.path.insert(0, '/app/src'); from src.utils.logging_config import setup_logging" &> /dev/null; then
+    if python -c "import sys; sys.path.insert(0, '/app'); import src.utils.logging_config; import src.main_application" 2>/dev/null; then
         log_success "Python environment setup completed"
     else
-        log_error "Python environment setup failed"
-        exit 1
+        # Try with more detailed error output for debugging
+        log_warning "Testing Python environment with detailed output..."
+        python -c "import sys; sys.path.insert(0, '/app'); print('Python path:', sys.path); import src.utils.logging_config; import src.main_application; print('Import successful')"
+        if [ $? -eq 0 ]; then
+            log_success "Python environment setup completed"
+        else
+            log_error "Python environment setup failed"
+            exit 1
+        fi
     fi
 }
 

@@ -15,6 +15,7 @@ from .utils.progress_persistence import ProgressPersistence, get_progress_persis
 from .utils.duplicate_detector import DuplicateDetector, DuplicateStrategy, get_duplicate_detector
 from .utils.batch_processor import BatchProcessor, get_batch_processor
 from .utils.performance_monitor import PerformanceMonitor, PerformanceContext, get_performance_monitor
+from .utils.file_watcher import FileWatcher
 from .config.config_manager import ConfigManager
 from .scanner.file_scanner import FileScanner
 from .scrapers.scraper_factory import ScraperFactory
@@ -68,7 +69,7 @@ class AVMetadataScraper:
         """
         # Load configuration
         self.config_manager = ConfigManager(config_path)
-        self.config = self.config_manager.get_config()
+        self.config = self.config_manager.get_config_data()
         
         # Set up logging
         self._setup_logging()
@@ -99,6 +100,11 @@ class AVMetadataScraper:
         self.enable_duplicate_detection = self.config.get('advanced', {}).get('enable_duplicate_detection', False)
         self.enable_performance_monitoring = self.config.get('advanced', {}).get('enable_performance_monitoring', True)
         
+        # Watch mode configuration
+        self.watch_mode = self.config.get('watch_mode', {}).get('enabled', False)
+        self.watch_interval = self.config.get('watch_mode', {}).get('scan_interval', 30)
+        self.file_watcher: Optional[FileWatcher] = None
+        
         self.logger.info("AV Metadata Scraper initialized")
     
     def _setup_logging(self) -> None:
@@ -126,11 +132,11 @@ class AVMetadataScraper:
         """Initialize all application components."""
         try:
             # File scanner
-            scanner_config = self.config.get('scanner', {})
+            directories_config = self.config.get('directories', {})
+            supported_extensions = self.config.get('supported_extensions', ['.mp4', '.mkv', '.avi'])
             self.file_scanner = FileScanner(
-                source_directory=scanner_config.get('source_directory', '.'),
-                supported_formats=scanner_config.get('supported_formats', ['.mp4', '.mkv', '.avi']),
-                recursive_scan=scanner_config.get('recursive', True)
+                source_directory=directories_config.get('source', './source'),
+                supported_formats=supported_extensions
             )
             
             # Metadata scraper factory
@@ -139,13 +145,14 @@ class AVMetadataScraper:
             self.metadata_scraper = self.scraper_factory.create_metadata_scraper()
             
             # File organizer
-            organizer_config = self.config.get('organizer', {})
+            directories_config = self.config.get('directories', {})
+            organization_config = self.config.get('organization', {})
             self.file_organizer = FileOrganizer(
-                target_directory=organizer_config.get('target_directory', './organized'),
-                naming_pattern=organizer_config.get('naming_pattern', '{actress}/{code}/{code}.{ext}'),
-                conflict_resolution=ConflictResolution(organizer_config.get('conflict_resolution', 'rename')),
-                create_metadata_files=organizer_config.get('create_metadata_files', True),
-                safe_mode=organizer_config.get('safe_mode', True)
+                target_directory=directories_config.get('target', './organized'),
+                naming_pattern=organization_config.get('naming_pattern', '{actress}/{code}/{code}.{ext}'),
+                conflict_resolution=ConflictResolution(organization_config.get('conflict_resolution', 'rename')),
+                create_metadata_files=organization_config.get('create_metadata_files', True),
+                safe_mode=organization_config.get('safe_mode', True)
             )
             
             # Image downloader
@@ -204,6 +211,105 @@ class AVMetadataScraper:
         finally:
             await self._cleanup()
     
+    async def start_watch_mode(self) -> None:
+        """Start the application in watch mode for continuous monitoring."""
+        if self.is_running:
+            self.logger.warning("Application is already running")
+            return
+        
+        self.logger.info("Starting AV Metadata Scraper in WATCH MODE")
+        self.is_running = True
+        self.should_stop = False
+        
+        # Set up signal handlers for graceful shutdown
+        self._setup_signal_handlers()
+        
+        try:
+            # Start performance monitoring if enabled
+            if self.enable_performance_monitoring:
+                self.performance_monitor.start_monitoring()
+            
+            # Initialize file watcher
+            directories_config = self.config.get('directories', {})
+            source_dir = Path(directories_config.get('source', './source'))
+            supported_extensions = self.config.get('supported_extensions', ['.mp4', '.mkv', '.avi'])
+            
+            self.file_watcher = FileWatcher(
+                watch_directory=source_dir,
+                supported_formats=supported_extensions,
+                scan_interval=self.watch_interval,
+                cooldown_seconds=5
+            )
+            
+            # Process existing unprocessed files first
+            self.logger.info("Scanning for existing unprocessed files...")
+            initial_files = self.file_watcher.get_initial_files()
+            
+            if initial_files:
+                self.logger.info(f"Processing {len(initial_files)} existing files...")
+                for file_path in initial_files:
+                    await self._process_new_file(file_path)
+                    self.file_watcher.mark_as_processed(file_path)
+            
+            # Start watching for new files
+            self.logger.info(f"Starting file system monitoring on: {source_dir}")
+            await self.file_watcher.start_async(
+                callback=lambda path: asyncio.create_task(self._process_new_file(path))
+            )
+            
+            # Keep the application running
+            self.logger.info("Watch mode active. Press Ctrl+C to stop.")
+            while not self.should_stop:
+                await asyncio.sleep(1)
+                
+                # Periodically log status
+                if int(datetime.now().timestamp()) % 60 == 0:  # Every minute
+                    self.logger.debug(f"Watch mode active - Processed: {self.processing_stats.files_processed} files")
+            
+        except KeyboardInterrupt:
+            self.logger.info("Received interrupt signal")
+        except Exception as e:
+            self.logger.error(f"Error in watch mode: {e}")
+            self.error_handler.handle_error(e, context={'component': 'watch_mode'})
+        finally:
+            if self.file_watcher:
+                self.file_watcher.stop()
+            await self._cleanup()
+    
+    async def _process_new_file(self, file_path: Path) -> None:
+        """Process a newly detected video file."""
+        try:
+            self.logger.info(f"Processing file: {file_path}")
+            
+            # Create VideoFile object
+            video_file = VideoFile(
+                file_path=str(file_path),
+                filename=file_path.name,
+                file_size=file_path.stat().st_size if file_path.exists() else 0,
+                extension=file_path.suffix
+            )
+            
+            # Extract code from filename
+            code = self.file_scanner.extract_code_from_filename(file_path.name)
+            if code:
+                video_file.detected_code = code
+                
+                # Process the file through the pipeline
+                await self._process_single_file(video_file, "WatchMode")
+                
+                # Mark as processed
+                if self.file_watcher:
+                    self.file_watcher.mark_as_processed(file_path)
+                    
+                self.processing_stats.files_processed += 1
+                self.logger.info(f"Successfully processed: {file_path.name}")
+            else:
+                self.logger.warning(f"Could not extract code from filename: {file_path.name}")
+                
+        except Exception as e:
+            self.logger.error(f"Error processing file {file_path}: {e}")
+            self.error_handler.handle_error(e, context={'file': str(file_path)})
+    
     async def stop(self) -> None:
         """Stop the application gracefully."""
         if not self.is_running:
@@ -211,6 +317,10 @@ class AVMetadataScraper:
         
         self.logger.info("Stopping AV Metadata Scraper...")
         self.should_stop = True
+        
+        # Stop file watcher if active
+        if self.file_watcher:
+            self.file_watcher.stop()
         
         # Cancel worker tasks
         for task in self.worker_tasks:
@@ -283,7 +393,7 @@ class AVMetadataScraper:
             self.logger.info("Scanning for video files...")
             
             try:
-                video_files = await asyncio.to_thread(self.file_scanner.scan_files)
+                video_files = await asyncio.to_thread(self.file_scanner.scan_directory)
                 
                 self.processing_stats.files_scanned = len(video_files)
                 ctx.update(current=len(video_files))

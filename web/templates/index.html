@@ -214,6 +214,47 @@
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
 
+        /* File Management Styles */
+        .file-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .file-actions .btn-sm {
+            padding: 5px 10px;
+            font-size: 0.875rem;
+        }
+
+        .rename-input {
+            display: none;
+            width: 100%;
+        }
+
+        .rename-input.active {
+            display: block;
+        }
+
+        .file-name-display.editing {
+            display: none;
+        }
+
+        .table td {
+            vertical-align: middle;
+        }
+
+        .file-checkbox {
+            cursor: pointer;
+        }
+
+        tr.selected {
+            background-color: rgba(99, 102, 241, 0.1);
+        }
+
+        .btn-icon {
+            padding: 4px 8px;
+            font-size: 0.9rem;
+        }
+
         .badge {
             padding: 5px 10px;
             border-radius: 20px;
@@ -250,13 +291,16 @@
                         <i class="bi bi-gear"></i> 配置管理
                     </a>
                     <a class="nav-link" href="#scan" data-page="scan">
-                        <i class="bi bi-folder-open"></i> 文件扫描
-                    </a>
-                    <a class="nav-link" href="#task" data-page="task">
-                        <i class="bi bi-play-circle"></i> 任务管理
+                        <i class="bi bi-folder-open"></i> 文件管理
                     </a>
                     <a class="nav-link" href="#logs" data-page="logs">
                         <i class="bi bi-terminal"></i> 实时日志
+                    </a>
+                    <a class="nav-link" href="#javdb" data-page="javdb">
+                        <i class="bi bi-key"></i> JavDB登录
+                    </a>
+                    <a class="nav-link" href="#history" data-page="history">
+                        <i class="bi bi-clock-history"></i> 刮削历史
                     </a>
                     <a class="nav-link" href="#stats" data-page="stats">
                         <i class="bi bi-bar-chart"></i> 统计信息
@@ -277,7 +321,14 @@
             <div class="col-md-10 content-area">
                 <!-- 仪表板页面 -->
                 <div id="dashboard-page" class="page-content">
-                    <h2 class="mb-4">仪表板</h2>
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h2 class="mb-0">仪表板</h2>
+                        <div>
+                            <a href="/patterns" class="btn btn-outline-primary">
+                                <i class="bi bi-regex"></i> 正则规则管理
+                            </a>
+                        </div>
+                    </div>
                     
                     <div class="row mb-4">
                         <div class="col-md-3">
@@ -423,55 +474,58 @@
                     </div>
                 </div>
 
-                <!-- 文件扫描页面 -->
+                <!-- 文件管理页面 -->
                 <div id="scan-page" class="page-content" style="display: none;">
-                    <h2 class="mb-4">文件扫描</h2>
+                    <h2 class="mb-4">文件管理</h2>
                     
                     <div class="config-section">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h5>源目录文件</h5>
-                            <button class="btn btn-primary" onclick="scanFiles()">
-                                <i class="bi bi-arrow-clockwise"></i> 扫描文件
-                            </button>
+                            <div>
+                                <button class="btn btn-secondary me-2" id="monitor-btn" onclick="toggleMonitoring()">
+                                    <i class="bi bi-eye"></i> 实时监控
+                                </button>
+                                <button class="btn btn-secondary me-2" id="select-all-btn" onclick="toggleSelectAll()" style="display: none;">
+                                    <i class="bi bi-check-square"></i> 全选
+                                </button>
+                                <button class="btn btn-success me-2" id="scrape-selected-btn" onclick="scrapeSelectedFiles()" style="display: none;" disabled>
+                                    <i class="bi bi-collection-play"></i> 批量刮削
+                                </button>
+                                <button class="btn btn-danger me-2" id="delete-selected-btn" onclick="deleteSelectedFiles()" style="display: none;" disabled>
+                                    <i class="bi bi-trash"></i> 删除选中
+                                </button>
+                                <button class="btn btn-primary" onclick="scanFiles(event)">
+                                    <i class="bi bi-arrow-clockwise"></i> 刷新列表
+                                </button>
+                            </div>
                         </div>
                         
-                        <div id="scan-results" class="file-list">
-                            <p class="text-muted">点击"扫描文件"按钮开始扫描</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 任务管理页面 -->
-                <div id="task-page" class="page-content" style="display: none;">
-                    <h2 class="mb-4">任务管理</h2>
-                    
-                    <div class="config-section">
-                        <h5>任务控制</h5>
-                        <div class="row align-items-center">
-                            <div class="col-md-8">
-                                <div class="progress mb-3">
-                                    <div id="task-progress-bar" class="progress-bar" role="progressbar" style="width: 0%">0%</div>
+                        <div id="file-list-container">
+                            <div class="table-responsive">
+                                <table class="table table-hover" id="file-list-table" style="display: none;">
+                                    <thead>
+                                        <tr>
+                                            <th width="40">
+                                                <input type="checkbox" class="form-check-input" id="select-all-checkbox" onchange="selectAllFiles(this)">
+                                            </th>
+                                            <th>文件名</th>
+                                            <th width="100">大小</th>
+                                            <th width="120">识别代码</th>
+                                            <th width="300">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="file-list-body">
+                                    </tbody>
+                                </table>
+                                <div id="empty-state" class="text-center py-5">
+                                    <i class="bi bi-folder2-open" style="font-size: 3rem; color: #dee2e6;"></i>
+                                    <p class="text-muted mt-3">点击"刷新列表"按钮加载文件</p>
                                 </div>
-                                <p id="task-info" class="text-muted">准备就绪</p>
                             </div>
-                            <div class="col-md-4 text-end">
-                                <button id="btn-start-task" class="btn btn-success" onclick="startTask()">
-                                    <i class="bi bi-play-fill"></i> 开始任务
-                                </button>
-                                <button id="btn-stop-task" class="btn btn-danger" onclick="stopTask()" style="display: none;">
-                                    <i class="bi bi-stop-fill"></i> 停止任务
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="config-section">
-                        <h5>任务历史</h5>
-                        <div id="task-history-list">
-                            <p class="text-muted">暂无任务历史</p>
                         </div>
                     </div>
                 </div>
+
 
                 <!-- 实时日志页面 -->
                 <div id="logs-page" class="page-content" style="display: none;">
@@ -486,6 +540,110 @@
                         </div>
                         <div id="log-container" class="log-container">
                             <div class="text-muted p-3">等待日志输出...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- JavDB登录页面 -->
+                <div id="javdb-page" class="page-content" style="display: none;">
+                    <h2 class="mb-4">JavDB 登录管理</h2>
+                    
+                    <div class="config-section">
+                        <h5><i class="bi bi-shield-check"></i> Cookie 状态</h5>
+                        <div class="row mb-4">
+                            <div class="col-md-12">
+                                <div id="cookie-status-card" class="card">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <h6 class="card-title mb-1">当前状态</h6>
+                                                <p class="card-text mb-0" id="cookie-status-text">检查中...</p>
+                                            </div>
+                                            <div>
+                                                <button class="btn btn-sm btn-primary" onclick="checkCookieStatus()">
+                                                    <i class="bi bi-arrow-clockwise"></i> 刷新状态
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div id="cookie-details" class="mt-3" style="display: none;">
+                                            <small class="text-muted">
+                                                <div>保存时间: <span id="cookie-timestamp"></span></div>
+                                                <div>Cookie数量: <span id="cookie-count"></span></div>
+                                                <div>使用天数: <span id="cookie-age"></span></div>
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <h5><i class="bi bi-box-arrow-in-right"></i> 登录操作</h5>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h6 class="card-title">手动登录</h6>
+                                        <p class="card-text text-muted small">
+                                            打开浏览器窗口，手动登录JavDB网站。登录成功后cookies将自动保存。
+                                        </p>
+                                        <button class="btn btn-success" onclick="performJavDBLogin()" id="login-btn">
+                                            <i class="bi bi-person-check"></i> 开始登录
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h6 class="card-title">验证Cookies</h6>
+                                        <p class="card-text text-muted small">
+                                            验证保存的cookies是否仍然有效，确保可以正常访问JavDB。
+                                        </p>
+                                        <button class="btn btn-info text-white" onclick="verifyCookies()" id="verify-btn">
+                                            <i class="bi bi-check-circle"></i> 验证有效性
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row mt-3">
+                            <div class="col-md-12">
+                                <div class="card border-danger">
+                                    <div class="card-body">
+                                        <h6 class="card-title text-danger">危险操作</h6>
+                                        <p class="card-text text-muted small">
+                                            清除所有保存的JavDB cookies。清除后需要重新登录。
+                                        </p>
+                                        <button class="btn btn-danger" onclick="clearCookies()" id="clear-btn">
+                                            <i class="bi bi-trash"></i> 清除Cookies
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 登录提示模态框 -->
+                    <div class="modal fade" id="loginModal" tabindex="-1">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">JavDB 登录中...</h5>
+                                </div>
+                                <div class="modal-body">
+                                    <p>正在打开浏览器窗口，请在浏览器中完成登录。</p>
+                                    <p class="text-muted">登录成功后，系统将自动保存cookies。</p>
+                                    <div class="progress mt-3">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                             role="progressbar" style="width: 100%"></div>
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -511,6 +669,99 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- 刮削历史页面 -->
+                <div id="history-page" class="page-content" style="display: none;">
+                    <h2 class="mb-4">刮削历史</h2>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="history-search" placeholder="搜索文件名、番号或演员...">
+                                <button class="btn btn-primary" onclick="searchHistory()">
+                                    <i class="bi bi-search"></i> 搜索
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select" id="history-filter" onchange="filterHistory()">
+                                <option value="">全部状态</option>
+                                <option value="success">成功</option>
+                                <option value="failed">失败</option>
+                                <option value="partial">部分成功</option>
+                                <option value="skipped">跳过</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <button class="btn btn-success" onclick="exportHistory()">
+                                <i class="bi bi-download"></i> 导出CSV
+                            </button>
+                            <button class="btn btn-warning" onclick="refreshHistory()">
+                                <i class="bi bi-arrow-clockwise"></i> 刷新
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 历史统计卡片 -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" id="history-total">0</div>
+                                <div class="stat-label">总处理数</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" id="history-success">0</div>
+                                <div class="stat-label">成功</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" id="history-failed">0</div>
+                                <div class="stat-label">失败</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="stat-value" id="history-success-rate">0%</div>
+                                <div class="stat-label">成功率</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 历史记录表格 -->
+                    <div class="config-section">
+                        <h5>处理记录</h5>
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="history-table">
+                                <thead>
+                                    <tr>
+                                        <th>处理时间</th>
+                                        <th>状态</th>
+                                        <th>原始文件名</th>
+                                        <th>识别代码</th>
+                                        <th>新文件名</th>
+                                        <th>标题</th>
+                                        <th>演员</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="history-tbody">
+                                    <tr>
+                                        <td colspan="8" class="text-center text-muted">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- 分页控件 -->
+                        <nav aria-label="History pagination">
+                            <ul class="pagination justify-content-center" id="history-pagination">
+                            </ul>
+                        </nav>
                     </div>
                 </div>
             </div>

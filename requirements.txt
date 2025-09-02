@@ -37,6 +37,13 @@ psutil==5.9.6
 safety==3.0.1
 bandit==1.7.5
 
+# File monitoring
+watchdog==3.0.0
+
+# API server dependencies
+Flask==2.3.3
+flask-cors==4.0.0
+
 # Development dependencies
 black==23.11.0
 flake8==6.1.0
