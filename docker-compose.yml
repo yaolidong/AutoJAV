@@ -6,9 +6,8 @@ services:
     container_name: av-metadata-scraper
     restart: unless-stopped
     
-    # Expose API port
-    ports:
-      - "5001:5001"
+    # 使用host网络模式
+    network_mode: host
     
     # Volumes
     volumes:
@@ -68,9 +67,6 @@ services:
     security_opt:
       - no-new-privileges:true
     
-    # Network configuration
-    networks:
-      - av-scraper-network
     
     # Health check
     healthcheck:
@@ -94,12 +90,17 @@ services:
       dockerfile: Dockerfile.web
     container_name: av-scraper-web
     restart: unless-stopped
-    ports:
-      - "${WEB_PORT:-8080}:5000"
+    # 使用host网络模式
+    network_mode: host
     environment:
       - FLASK_APP=web_app.py
       - PYTHONUNBUFFERED=1
       - CONFIG_FILE=/app/config/config.yaml
+      # Web服务端口（host模式下使用）
+      - WEB_PORT=${WEB_PORT:-8899}
+      # API服务地址（host模式下使用localhost）
+      - API_HOST=localhost
+      - API_PORT=5555
     volumes:
       # Configuration directory (includes config.yaml and patterns.json)
       - ${CONFIG_DIR:-./config}:/app/config
@@ -109,21 +110,11 @@ services:
       - ${TARGET_DIR:-./organized}:/app/target
       # Logs directory
       - ${LOGS_DIR:-./logs}:/app/logs
-    networks:
-      - av-scraper-network
     depends_on:
       - av-scraper
 
 # Named volumes
 volumes:
-  chrome-data:
   chrome_data:
     driver: local
 
-# Networks
-networks:
-  av-scraper-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16

@@ -8,6 +8,11 @@ echo "Starting AV Metadata Scraper with API Server..."
 # Set Python path
 export PYTHONPATH=/app:$PYTHONPATH
 
+# Force use system chromedriver - prevent Selenium auto-download
+export SE_SKIP_DRIVER_DOWNLOAD=1
+export WDM_LOCAL=1
+export SE_DRIVER_PATH=/usr/bin/chromedriver
+
 # Create necessary directories
 mkdir -p /app/logs /app/source /app/target /app/config
 
@@ -28,7 +33,7 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # Start API server in background
-echo "Starting API server on port 5001..."
+echo "Starting API server on port 5555..."
 python -m src.api_server &
 API_PID=$!
 

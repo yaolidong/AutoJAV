@@ -40,9 +40,12 @@ RUN chmod +x /app/scripts/vnc_startup.sh
 RUN mkdir -p /app/config /app/logs /app/source /app/organized /var/log/supervisor
 
 # 8. 暴露端口
-EXPOSE 5000  # Flask App
-EXPOSE 5901  # VNC Server
-EXPOSE 6901  # noVNC Web Client
+# Flask App
+EXPOSE 5000
+# VNC Server
+EXPOSE 5901
+# noVNC Web Client
+EXPOSE 6901
 
 # 9. 环境变量
 ENV DISPLAY=:1 \

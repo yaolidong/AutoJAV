@@ -53,8 +53,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chromium instead of Chrome for better ARM compatibility
+# Also install Xvfb for virtual display support
 RUN apt-get update && \
-    apt-get install -y chromium chromium-driver && \
+    apt-get install -y chromium chromium-driver xvfb && \
     rm -rf /var/lib/apt/lists/*
 
 # Create symlinks for compatibility
@@ -93,7 +94,10 @@ ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     DISPLAY=:99 \
     CHROME_BIN=/usr/bin/chromium \
-    CHROMEDRIVER_PATH=/usr/bin/chromedriver
+    CHROMEDRIVER_PATH=/usr/bin/chromedriver \
+    WDM_LOCAL=1 \
+    WDM_LOG=false \
+    SE_DRIVER_PATH=/usr/bin/chromedriver
 
 # Expose API port
 EXPOSE 5001

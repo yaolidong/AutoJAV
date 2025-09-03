@@ -26,6 +26,7 @@ from src.models.movie_metadata import MovieMetadata
 from src.models.scrape_history import ProcessStatus
 from src.utils.logging_config import setup_application_logging
 from src.utils.history_manager import HistoryManager
+from src.utils.vnc_login_manager import VNCLoginManager
 
 # Setup logging
 setup_application_logging()
@@ -41,12 +42,13 @@ file_organizer = None
 parallel_scraper = None
 history_manager = None
 image_downloader = None
+vnc_login_manager = None # Global VNC manager instance
 task_queue = queue.Queue()
 current_task = None
 
 def initialize_components():
     """Initialize scraper components"""
-    global config_manager, scraper_factory, file_organizer, parallel_scraper, history_manager, image_downloader
+    global config_manager, scraper_factory, file_organizer, parallel_scraper, history_manager, image_downloader, vnc_login_manager
     
     try:
         # Load configuration
@@ -85,6 +87,9 @@ def initialize_components():
             resize_images=downloader_config.get('resize_images', False),
             create_thumbnails=downloader_config.get('create_thumbnails', False)
         )
+
+        # Initialize VNC Login Manager
+        vnc_login_manager = VNCLoginManager(config_dir='/app/config')
         
         logger.info("API server components initialized successfully")
         return True
@@ -192,13 +197,35 @@ def scrape_metadata():
                                 loop.close()
                     
                     # Record in history
-                    history_manager.record_scrape(
-                        original_path=file_path,
-                        organized_path=result.get('data', {}).get('target_path', file_path),
-                        metadata=metadata,
-                        status=ProcessStatus.SUCCESS if result.get('success') else ProcessStatus.FAILED,
-                        error_message=result.get('error')
-                    )
+                    if result.get('success'):
+                        history_manager.record_success(
+                            original_filename=Path(file_path).name,
+                            original_path=file_path,
+                            file_size=Path(file_path).stat().st_size if Path(file_path).exists() else 0,
+                            file_extension=Path(file_path).suffix,
+                            detected_code=code,
+                            new_filename=Path(result.get('data', {}).get('target_path', file_path)).name,
+                            new_path=result.get('data', {}).get('target_path', file_path),
+                            metadata={
+                                'code': metadata.code,
+                                'title': metadata.title,
+                                'actresses': metadata.actresses,
+                                'release_date': metadata.release_date.isoformat() if metadata.release_date else None,
+                                'studio': metadata.studio,
+                                'genres': metadata.genres,
+                                'cover_downloaded': True
+                            },
+                            scraper_used='Multiple'
+                        )
+                    else:
+                        history_manager.record_failure(
+                            original_filename=Path(file_path).name,
+                            original_path=file_path,
+                            file_size=Path(file_path).stat().st_size if Path(file_path).exists() else 0,
+                            file_extension=Path(file_path).suffix,
+                            detected_code=code,
+                            error_message=result.get('error', 'Unknown error')
+                        )
                     
                     return jsonify({
                         'success': True,
@@ -224,6 +251,26 @@ def scrape_metadata():
                 else:
                     # Scraping failed - file stays in source
                     logger.warning(f"No valid actresses found for {code}, file remains in source")
+                    # Record as partial success
+                    history_manager.record_success(
+                        original_filename=Path(file_path).name,
+                        original_path=file_path,
+                        file_size=Path(file_path).stat().st_size if Path(file_path).exists() else 0,
+                        file_extension=Path(file_path).suffix,
+                        detected_code=code,
+                        new_filename=Path(file_path).name,
+                        new_path=file_path,
+                        metadata={
+                            'code': metadata.code,
+                            'title': metadata.title,
+                            'actresses': metadata.actresses,
+                            'release_date': metadata.release_date.isoformat() if metadata.release_date else None,
+                            'studio': metadata.studio,
+                            'genres': metadata.genres,
+                            'cover_downloaded': False
+                        },
+                        scraper_used='Multiple'
+                    )
                     
             return jsonify({
                 'success': True,
@@ -247,6 +294,16 @@ def scrape_metadata():
             })
         else:
             logger.warning(f"API: No metadata found for {code}")
+            # Record failure in history
+            if file_path:
+                history_manager.record_failure(
+                    original_filename=Path(file_path).name,
+                    original_path=file_path,
+                    file_size=Path(file_path).stat().st_size if Path(file_path).exists() else 0,
+                    file_extension=Path(file_path).suffix,
+                    detected_code=code,
+                    error_message=f'No metadata found for {code}'
+                )
             return jsonify({
                 'success': False,
                 'error': f'No metadata found for {code}'
@@ -501,6 +558,32 @@ def get_status():
         'queue_size': task_queue.qsize()
     })
 
+@app.route('/api/javdb/vnc_login', methods=['POST'])
+def javdb_vnc_login():
+    """Manages JAVDB login via a VNC session."""
+    global vnc_login_manager
+    if not vnc_login_manager:
+        return jsonify({'success': False, 'error': 'VNC Login Manager not initialized'}), 500
+
+    try:
+        data = request.json or {}
+        action = data.get('action', 'start')
+
+        if action == 'start':
+            result = vnc_login_manager.start_login_session()
+            return jsonify(result)
+        
+        elif action == 'check':
+            result = vnc_login_manager.check_and_save_cookies()
+            return jsonify(result)
+
+        else:
+            return jsonify({'success': False, 'error': f'Unknown action: {action}'})
+
+    except Exception as e:
+        logger.error(f"VNC login operation failed: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/history', methods=['GET'])
 def get_history():
     """Get scraping history"""
@@ -597,7 +680,7 @@ def export_history():
         logger.error(f"Error exporting history: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-def run_api_server(host='0.0.0.0', port=5001):
+def run_api_server(host='0.0.0.0', port=5555):
     """Run the API server"""
     logger.info(f"Starting API server on {host}:{port}")
     

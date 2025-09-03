@@ -1200,72 +1200,269 @@ async function checkCookieStatus() {
     }
 }
 
-// 执行JavDB登录
+// 执行JavDB登录 - 提供多种登录方式
 async function performJavDBLogin() {
+    console.log('开始JavDB登录...');
     const loginBtn = document.getElementById('login-btn');
-    const originalText = loginBtn.innerHTML;
+    
+    // 创建登录选项弹窗
+    const loginOptions = `
+        <div class="modal fade" id="javdbLoginModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">JavDB 登录</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="login-options">
+                            <div class="alert alert-info">
+                                <strong>提示：</strong>JavDB 需要通过代理访问。请先配置代理，然后选择登录方式。
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title">
+                                                <i class="bi bi-window"></i> 浏览器窗口登录
+                                            </h5>
+                                            <p class="card-text text-muted">
+                                                打开浏览器窗口，您可以手动登录，系统会自动保存Cookies
+                                            </p>
+                                            <button class="btn btn-primary" onclick="openBrowserLogin()">
+                                                <i class="bi bi-box-arrow-up-right"></i> 打开浏览器
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title">
+                                                <i class="bi bi-key"></i> 账号密码登录
+                                            </h5>
+                                            <p class="card-text text-muted">
+                                                输入账号密码和验证码进行登录（需要手动输入验证码）
+                                            </p>
+                                            <button class="btn btn-secondary" onclick="showManualLogin()">
+                                                <i class="bi bi-person-circle"></i> 手动登录
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3">
+                                <div class="card border-warning">
+                                    <div class="card-body">
+                                        <h6 class="card-title text-warning">
+                                            <i class="bi bi-exclamation-triangle"></i> 配置代理
+                                        </h6>
+                                        <p class="card-text small">
+                                            如果无法访问JavDB，请先配置代理：
+                                        </p>
+                                        <pre class="bg-light p-2 small">docker exec -it av-metadata-scraper vi /app/config/config.yaml
+
+# 添加以下配置：
+network:
+  proxy_url: "http://your-proxy:port"</pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="browser-login-status" style="display: none;">
+                            <div class="text-center">
+                                <div class="spinner-border text-primary mb-3" role="status">
+                                    <span class="visually-hidden">等待登录...</span>
+                                </div>
+                                <h5>浏览器窗口已打开</h5>
+                                <p>请在打开的浏览器窗口中完成JavDB登录</p>
+                                <p class="text-muted">登录成功后，系统会自动保存Cookies并关闭窗口</p>
+                                <div class="mt-3">
+                                    <button class="btn btn-secondary" onclick="checkBrowserLoginStatus()">
+                                        <i class="bi bi-arrow-clockwise"></i> 检查状态
+                                    </button>
+                                    <button class="btn btn-danger" onclick="closeBrowserLogin()">
+                                        <i class="bi bi-x-circle"></i> 关闭窗口
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="manual-login-form" style="display: none;">
+                            <!-- 手动登录表单内容会在showManualLogin()中添加 -->
+                        <h5 class="modal-title">JavDB 登录</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="login-step-1">
+                            <div class="mb-3">
+                                <label class="form-label">用户名</label>
+                                <input type="text" class="form-control" id="javdb-username" placeholder="请输入JavDB用户名">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">密码</label>
+                                <input type="password" class="form-control" id="javdb-password" placeholder="请输入密码">
+                            </div>
+                            <button class="btn btn-primary" onclick="getJavDBCaptcha()">
+                                <i class="bi bi-arrow-right"></i> 获取验证码
+                            </button>
+                        </div>
+                        
+                        <div id="login-step-2" style="display: none;">
+                            <div class="alert alert-info">
+                                <strong>提示：</strong>如果看不到验证码，说明JavDB无法访问，请配置代理。
+                            </div>
+                            <div class="text-center mb-3">
+                                <img id="captcha-image" src="" alt="验证码" style="max-width: 300px; border: 1px solid #ddd; padding: 10px;">
+                                <br>
+                                <button class="btn btn-sm btn-secondary mt-2" onclick="getJavDBCaptcha()">
+                                    <i class="bi bi-arrow-clockwise"></i> 刷新验证码
+                                </button>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">验证码</label>
+                                <input type="text" class="form-control" id="javdb-captcha" placeholder="请输入上图中的验证码">
+                            </div>
+                            <button class="btn btn-success" onclick="submitJavDBLogin()">
+                                <i class="bi bi-check-circle"></i> 提交登录
+                            </button>
+                        </div>
+                        
+                        <div id="login-loading" style="display: none;">
+                            <div class="text-center">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">加载中...</span>
+                                </div>
+                                <p class="mt-3">正在处理...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // 添加模态框到页面（如果不存在）
+    if (!document.getElementById('javdbLoginModal')) {
+        document.body.insertAdjacentHTML('beforeend', loginForm);
+    }
+    
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('javdbLoginModal'));
+    modal.show();
+}
+
+// 获取验证码
+async function getJavDBCaptcha() {
+    const username = document.getElementById('javdb-username').value;
+    const password = document.getElementById('javdb-password').value;
+    
+    if (!username || !password) {
+        showToast('请先输入用户名和密码', 'warning');
+        return;
+    }
+    
+    // 显示加载状态
+    document.getElementById('login-step-1').style.display = 'none';
+    document.getElementById('login-loading').style.display = 'block';
     
     try {
-        // 禁用按钮并显示加载状态
-        loginBtn.disabled = true;
-        loginBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>生成登录链接...';
-        
-        // 发起登录请求（使用URL方式）
         const response = await fetch('/api/javdb/login', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                method: 'url'  // 使用URL方式
+                method: 'semi_auto',
+                action: 'get_captcha'
+            })
+        });
+        
+        console.log('响应状态:', response.status);
+        const result = await response.json();
+        console.log('响应结果:', result);
+        
+        document.getElementById('login-loading').style.display = 'none';
+        
+        if (result.success && result.captcha_image) {
+            // 显示验证码
+            document.getElementById('captcha-image').src = result.captcha_image;
+            document.getElementById('login-step-2').style.display = 'block';
+            showToast('验证码获取成功，请输入验证码', 'info');
+        } else {
+            // 获取失败
+            document.getElementById('login-step-1').style.display = 'block';
+            showToast(result.error || '获取验证码失败，可能需要配置代理', 'danger');
+        }
+    } catch (error) {
+        console.error('获取验证码失败:', error);
+        document.getElementById('login-loading').style.display = 'none';
+        document.getElementById('login-step-1').style.display = 'block';
+        showToast('获取验证码失败', 'danger');
+    }
+}
+
+// 提交登录
+async function submitJavDBLogin() {
+    const username = document.getElementById('javdb-username').value;
+    const password = document.getElementById('javdb-password').value;
+    const captcha = document.getElementById('javdb-captcha').value;
+    
+    if (!captcha) {
+        showToast('请输入验证码', 'warning');
+        return;
+    }
+    
+    // 显示加载状态
+    document.getElementById('login-step-2').style.display = 'none';
+    document.getElementById('login-loading').style.display = 'block';
+    
+    try {
+        const response = await fetch('/api/javdb/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                method: 'semi_auto',
+                action: 'submit',
+                username: username,
+                password: password,
+                captcha: captcha
             })
         });
         
         const result = await response.json();
+        document.getElementById('login-loading').style.display = 'none';
         
-        if (result.success && result.method === 'url') {
-            // 显示登录指引
-            const instructions = `
-                <div class="alert alert-info">
-                    <h5>🔐 JavDB 登录步骤</h5>
-                    <ol>
-                        <li>复制以下文件路径：<br>
-                            <code>${result.html_file}</code>
-                            <button class="btn btn-sm btn-secondary ms-2" onclick="copyToClipboard('${result.html_file}')">复制</button>
-                        </li>
-                        <li>在主机浏览器中打开该文件（file://开头）</li>
-                        <li>或直接访问JavDB：<br>
-                            <a href="${result.login_url}" target="_blank">${result.login_url}</a>
-                        </li>
-                        <li>登录成功后手动保存Cookies</li>
-                    </ol>
-                    <p class="mb-0">Token: <code>${result.token}</code></p>
-                </div>
-            `;
-            
-            // 显示指引在模态框中
-            const modalBody = document.querySelector('#loginModal .modal-body');
-            modalBody.innerHTML = instructions;
-            
-            const loginModal = new bootstrap.Modal(document.getElementById('loginModal'));
-            loginModal.show();
-            
-            showToast('登录链接已生成，请按照指引完成登录', 'info');
-        } else if (result.success) {
+        if (result.success) {
+            // 登录成功
             showToast('登录成功！Cookies已保存', 'success');
+            // 关闭模态框
+            const modal = bootstrap.Modal.getInstance(document.getElementById('javdbLoginModal'));
+            modal.hide();
             // 刷新Cookie状态
             await checkCookieStatus();
+        } else if (result.retry && result.new_captcha) {
+            // 验证码错误，显示新验证码
+            document.getElementById('captcha-image').src = result.new_captcha;
+            document.getElementById('javdb-captcha').value = '';
+            document.getElementById('login-step-2').style.display = 'block';
+            showToast(result.error || '验证码错误，请重新输入', 'warning');
         } else {
+            // 其他错误
+            document.getElementById('login-step-1').style.display = 'block';
             showToast(result.error || '登录失败', 'danger');
         }
-        
     } catch (error) {
-        console.error('登录失败:', error);
-        showToast('登录请求失败', 'danger');
-    } finally {
-        // 恢复按钮状态
-        loginBtn.disabled = false;
-        loginBtn.innerHTML = originalText;
+        console.error('提交登录失败:', error);
+        document.getElementById('login-loading').style.display = 'none';
+        document.getElementById('login-step-1').style.display = 'block';
+        showToast('提交登录失败', 'danger');
     }
 }
 
