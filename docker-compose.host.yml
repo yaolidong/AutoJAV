@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  av-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: av-metadata-scraper
+    restart: unless-stopped
+    
+    # 使用host网络模式
+    network_mode: host
+    
+    # Volumes
+    volumes:
+      # Source directory (read-write for moving files)
+      - ${SOURCE_DIR:-./source}:/app/source
+      # Target directory (read-write)
+      - ${TARGET_DIR:-./organized}:/app/target
+      # Configuration directory (includes config.yaml and patterns.json)
+      - ${CONFIG_DIR:-./config}:/app/config
+      # Logs directory
+      - ${LOGS_DIR:-./logs}:/app/logs
+      # Chrome data directory for session persistence
+      - chrome_data:/app/.chrome-data
+    
+    # Environment variables
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CONFIG_FILE=/app/config/config.yaml
+      - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+      - DISPLAY=:99
+      - CHROME_BIN=/usr/bin/google-chrome
+      - CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      # API服务端口（host模式下使用）
+      - API_PORT=5001
+      # Optional JavDB credentials
+      - JAVDB_USERNAME=${JAVDB_USERNAME:-}
+      - JAVDB_PASSWORD=${JAVDB_PASSWORD:-}
+      # Processing configuration
+      - MAX_CONCURRENT_FILES=${MAX_CONCURRENT_FILES:-2}
+      - MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS:-2}
+      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-2}
+      # Network configuration
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      # Feature flags
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+      - SAFE_MODE=${SAFE_MODE:-false}
+      - CREATE_METADATA_FILES=${CREATE_METADATA_FILES:-true}
+      - DOWNLOAD_IMAGES=${DOWNLOAD_IMAGES:-true}
+      - RESIZE_IMAGES=${RESIZE_IMAGES:-false}
+      - CREATE_THUMBNAILS=${CREATE_THUMBNAILS:-false}
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-2G}
+          cpus: '${CPU_LIMIT:-2.0}'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "/app/docker/healthcheck.py"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Web UI service
+  av-scraper-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: av-scraper-web
+    restart: unless-stopped
+    
+    # 使用host网络模式
+    network_mode: host
+    
+    environment:
+      - FLASK_APP=web_app.py
+      - PYTHONUNBUFFERED=1
+      - CONFIG_FILE=/app/config/config.yaml
+      # Web服务端口（host模式下使用）
+      - WEB_PORT=${WEB_PORT:-8080}
+      # API服务地址（host模式下使用localhost）
+      - API_HOST=localhost
+      - API_PORT=5001
+    
+    volumes:
+      # Configuration directory (includes config.yaml and patterns.json)
+      - ${CONFIG_DIR:-./config}:/app/config
+      # Source directory
+      - ${SOURCE_DIR:-./source}:/app/source
+      # Target directory  
+      - ${TARGET_DIR:-./organized}:/app/target
+      # Logs directory
+      - ${LOGS_DIR:-./logs}:/app/logs
+    
+    depends_on:
+      - av-scraper
+
+# Named volumes
+volumes:
+  chrome_data:
+    driver: local

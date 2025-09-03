@@ -64,8 +64,8 @@ async function startVNCLoginSession() {
             
             // 使用当前页面的主机名填充URL
             const hostname = window.location.hostname;
-            const webVncUrl = `http://${hostname}:6901`;
-            const clientVncUrl = `vnc://${hostname}:5901`;
+            const webVncUrl = `http://${hostname}:7900`;
+            const clientVncUrl = `vnc://${hostname}:5900`;
 
             document.getElementById('vnc-web-url').href = webVncUrl;
             document.getElementById('vnc-web-url').textContent = webVncUrl;

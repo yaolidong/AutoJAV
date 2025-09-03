@@ -32,7 +32,7 @@ class VNCLoginManager:
             self.driver = None
 
         try:
-            os.environ["DISPLAY"] = ":1"
+            os.environ["DISPLAY"] = ":0" # Selenium images use display :0
             chrome_options = Options()
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--window-size=1280,800")
@@ -46,8 +46,8 @@ class VNCLoginManager:
             return {
                 "success": True,
                 "message": "Browser started. Please connect via VNC.",
-                "vnc_url": "vnc://<your-host-ip>:5901",
-                "web_vnc_url": "http://<your-host-ip>:6901"
+                "vnc_url": "vnc://<your-host-ip>:5900",
+                "web_vnc_url": "http://<your-host-ip>:7900"
             }
         except Exception as e:
             logger.error(f"Failed to start browser in VNC: {e}")

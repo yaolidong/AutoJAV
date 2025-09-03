@@ -1,0 +1,122 @@
+# AutoJAV 配置文件 - 包含代理设置
+# 将此文件复制为 config.yaml 并修改相应设置
+
+# 目录设置
+directories:
+  source: "/app/source"          # 源视频文件目录
+  target: "/app/target"          # 整理后的目标目录
+  config: "/app/config"          # 配置文件目录
+  logs: "/app/logs"              # 日志文件目录
+
+# 网络设置（重要：配置代理以访问被屏蔽的网站）
+network:
+  # 代理设置示例（请根据您的实际代理修改）
+  # HTTP/HTTPS 代理格式：
+  # proxy_url: "http://127.0.0.1:7890"              # 本地代理（如 Clash/V2Ray）
+  # proxy_url: "http://proxy.example.com:8080"      # 远程代理服务器
+  # proxy_url: "http://user:pass@proxy.example.com:8080"  # 带认证的代理
+  # SOCKS5 代理格式：
+  # proxy_url: "socks5://127.0.0.1:1080"            # SOCKS5 代理
+  proxy_url: ""  # 请填写您的代理地址
+
+# 刮削器设置
+scraping:
+  # 刮削器优先级（按顺序尝试）
+  priority: ["javdb", "javlibrary"]
+  # 并发处理文件数
+  max_concurrent_files: 3
+  # 请求重试次数
+  retry_attempts: 3
+  # 请求超时时间（秒）
+  timeout: 30
+  # 请求间隔（秒）- 避免被封
+  request_delay: 1
+
+# JavDB 登录凭据（可选，但推荐以获得更好的刮削结果）
+credentials:
+  javdb:
+    username: ""  # 您的 JavDB 用户名
+    password: ""  # 您的 JavDB 密码
+    # 或者使用 cookies（如果您已经手动登录）
+    # cookies_file: "/app/config/javdb_cookies.json"
+
+# 文件组织设置
+organization:
+  # 命名模式
+  # 可用占位符: {actress}, {code}, {title}, {studio}, {year}, {month}, {ext}
+  naming_pattern: "{actress}/{code}/{code}.{ext}"
+  # 文件冲突处理: rename, skip, overwrite
+  conflict_resolution: "rename"
+  # 是否下载图片
+  download_images: true
+  # 是否保存元数据 JSON 文件
+  save_metadata: true
+  # 是否创建 NFO 文件（用于 Kodi/Jellyfin/Emby）
+  create_nfo: false
+  # 安全模式（复制而非移动）
+  safe_mode: false
+
+# 浏览器设置
+browser:
+  # 无头模式（服务器推荐）
+  headless: true
+  # 浏览器操作超时（秒）
+  timeout: 30
+  # User-Agent（模拟真实浏览器）
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# 图片下载设置
+downloader:
+  # 最大并发下载数
+  max_concurrent: 3
+  # 下载超时（秒）
+  timeout: 30
+  # 是否调整图片大小
+  resize_images: false
+  # 是否创建缩略图
+  create_thumbnails: false
+  # 图片质量（1-100）
+  image_quality: 95
+
+# 日志设置
+logging:
+  # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+  # 日志文件最大大小（MB）
+  max_file_size: 50
+  # 保留日志文件数
+  backup_count: 5
+
+# 支持的视频扩展名
+supported_extensions:
+  - ".mp4"
+  - ".mkv"
+  - ".avi"
+  - ".wmv"
+  - ".mov"
+  - ".flv"
+  - ".mpg"
+  - ".mpeg"
+  - ".m4v"
+  - ".ts"
+  - ".vob"
+  - ".webm"
+
+# 高级设置
+advanced:
+  # 是否启用缓存
+  enable_cache: true
+  # 缓存过期时间（小时）
+  cache_expiry: 24
+  # 是否验证 SSL 证书
+  verify_ssl: false
+  # 最大文件大小限制（GB）- 0 表示无限制
+  max_file_size: 0
+  # 是否处理子目录
+  process_subdirectories: true
+  # 忽略的文件名模式（正则表达式）
+  ignore_patterns:
+    - "^\\."           # 隐藏文件
+    - "^sample"        # 样本文件
+    - "trailer"        # 预告片
+    - "preview"        # 预览文件
