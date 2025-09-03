@@ -22,10 +22,11 @@ logger = logging.getLogger(__name__)
 class JavDBLoginManager:
     """Manages JavDB login and cookie persistence"""
     
-    def __init__(self, config_dir: str = "/app/config"):
+    def __init__(self, config_dir: str = "/app/config", user_data_dir: str = "config/chrome_profile"):
         self.config_dir = Path(config_dir)
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.cookie_file = self.config_dir / "javdb_cookies.json"
+        self.user_data_dir = user_data_dir
         self.base_url = "https://javdb.com"
         self.login_url = "https://javdb.com/login"
         
@@ -54,6 +55,10 @@ class JavDBLoginManager:
                 chrome_options.add_argument("--window-size=1280,800")
             else:
                 chrome_options.add_argument("--headless")
+
+            if self.user_data_dir:
+                chrome_options.add_argument(f"--user-data-dir={self.user_data_dir}")
+                logger.info(f"Using persistent user profile: {self.user_data_dir}")
                 
             # Add user agent to appear more like a real browser
             chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
@@ -185,6 +190,8 @@ class JavDBLoginManager:
                 chrome_options.add_argument("--headless")
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
+                if self.user_data_dir:
+                    chrome_options.add_argument(f"--user-data-dir={self.user_data_dir}")
                 driver = webdriver.Chrome(options=chrome_options)
                 close_driver = True
             
@@ -278,10 +285,11 @@ def main():
     parser.add_argument('--status', action='store_true', help='Check cookie status')
     parser.add_argument('--clear', action='store_true', help='Clear saved cookies')
     parser.add_argument('--config-dir', default='/app/config', help='Config directory path')
+    parser.add_argument('--user-data-dir', default='config/chrome_profile', help='Persistent user data directory for Chrome')
     
     args = parser.parse_args()
     
-    manager = JavDBLoginManager(config_dir=args.config_dir)
+    manager = JavDBLoginManager(config_dir=args.config_dir, user_data_dir=args.user_data_dir)
     
     if args.login:
         success = manager.manual_login(headless=False)

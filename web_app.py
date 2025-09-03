@@ -43,7 +43,10 @@ CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # API服务器地址
-API_BASE_URL = 'http://av-metadata-scraper:5001'
+# 在host网络模式下使用localhost
+API_HOST = os.environ.get('API_HOST', 'localhost')
+API_PORT = os.environ.get('API_PORT', '5001')
+API_BASE_URL = f'http://{API_HOST}:{API_PORT}'
 
 # 日志配置
 logging.basicConfig(
@@ -572,83 +575,88 @@ def delete_files():
         logger.error(f"删除操作失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/javdb/proxy')
+def javdb_proxy():
+    """代理JavDB页面请求"""
+    import requests
+    
+    url = request.args.get('url', 'https://javdb.com')
+    
+    # 获取代理配置
+    config = load_config()
+    proxy_url = config.get('network', {}).get('proxy_url')
+    
+    proxies = None
+    if proxy_url:
+        proxies = {
+            'http': proxy_url,
+            'https': proxy_url
+        }
+    
+    try:
+        # 获取页面内容
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        # 从session获取cookies（如果有）
+        cookies = session.get('javdb_cookies', {})
+        
+        response = requests.get(url, headers=headers, proxies=proxies, cookies=cookies, timeout=30)
+        
+        # 保存cookies到session
+        session['javdb_cookies'] = dict(response.cookies)
+        
+        # 修改页面内容，添加cookie监听脚本
+        content = response.text
+        
+        # 注入JavaScript来监听登录状态
+        inject_script = """
+        <script>
+        // 监听登录状态
+        setInterval(function() {
+            if (document.cookie.includes('_jdb_session')) {
+                window.parent.postMessage({type: 'javdb_logged_in', cookies: document.cookie}, '*');
+            }
+        }, 2000);
+        </script>
+        """
+        
+        # 在</body>前注入脚本
+        if '</body>' in content:
+            content = content.replace('</body>', inject_script + '</body>')
+        
+        return content
+        
+    except Exception as e:
+        logger.error(f"代理JavDB失败: {e}")
+        return f"<html><body><h1>无法访问JavDB</h1><p>{str(e)}</p><p>请检查代理配置</p></body></html>"
+
 @app.route('/api/javdb/login', methods=['POST'])
 def javdb_login():
-    """手动登录JavDB并保存cookies"""
+    """Manages JAVDB login via a VNC session."""
+    global vnc_login_manager
+    if not vnc_login_manager:
+        return jsonify({'success': False, 'error': 'VNC Login Manager not initialized'}), 500
+
     try:
         data = request.json or {}
-        method = data.get('method', 'url')  # 默认使用URL方式
+        action = data.get('action', 'start')
+
+        if action == 'start':
+            result = vnc_login_manager.start_login_session()
+            return jsonify(result)
         
-        # 初始化登录管理器
-        config = load_config()
-        config_dir = config.get('directories', {}).get('config', '/app/config')
-        
-        if method == 'url':
-            # 使用新的URL方式登录
-            login_manager = JavDBLoginVNC(config_dir=config_dir)
-            result = login_manager.generate_login_url()
-            
-            if result['success']:
-                return jsonify({
-                    'success': True,
-                    'method': 'url',
-                    'message': '请在浏览器中打开登录页面',
-                    'html_file': result['html_file'],
-                    'token': result['token'],
-                    'login_url': result['login_url'],
-                    'instructions': '请在主机浏览器中打开提供的HTML文件完成登录'
-                })
-        
-        elif method == 'headless':
-            # Headless模式（需要提供用户名密码）
-            username = data.get('username')
-            password = data.get('password')
-            
-            if not username or not password:
-                return jsonify({
-                    'success': False,
-                    'error': '请提供用户名和密码'
-                })
-            
-            login_manager = JavDBLoginVNC(config_dir=config_dir)
-            success = login_manager.login_headless_with_credentials(username, password)
-            
-            if success:
-                status = login_manager.get_cookie_status()
-                return jsonify({
-                    'success': True,
-                    'method': 'headless',
-                    'message': '自动登录成功，cookies已保存',
-                    'cookie_status': status
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': '自动登录失败，请检查用户名密码'
-                })
-        
+        elif action == 'check':
+            result = vnc_login_manager.check_and_save_cookies()
+            return jsonify(result)
+
         else:
-            # 尝试原始方式（可能无法工作）
-            login_manager = JavDBLoginManager(config_dir=config_dir)
-            logger.info("尝试启动JavDB登录流程...")
-            success = login_manager.manual_login(headless=True, timeout=300)
-            
-            if success:
-                status = login_manager.get_cookie_status()
-                return jsonify({
-                    'success': True,
-                    'message': '登录成功，cookies已保存',
-                    'cookie_status': status
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': '无法在容器中打开浏览器，请使用URL方式登录'
-                })
-            
+            return jsonify({'success': False, 'error': f'Unknown action: {action}'})
+
     except Exception as e:
-        logger.error(f"JavDB登录失败: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f"VNC login operation failed: {e}")
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/javdb/cookie-status', methods=['GET'])
 def javdb_cookie_status():
@@ -725,8 +733,8 @@ def scrape_file():
         # 调用主刮削容器的API
         import requests
         
-        # 使用Docker容器名称作为主机名
-        scraper_api_url = "http://av-metadata-scraper:5001/api/scrape"
+        # 在host网络模式下使用localhost
+        scraper_api_url = f"{API_BASE_URL}/api/scrape"
         
         try:
             response = requests.post(
@@ -769,7 +777,7 @@ def process_files():
         import requests
         
         # 使用Docker容器名称作为主机名
-        scraper_api_url = "http://av-metadata-scraper:5001/api/process"
+        scraper_api_url = f"{API_BASE_URL}/api/process"
         
         try:
             response = requests.post(
@@ -853,7 +861,7 @@ def run_scraping_task(task_id):
         
         # 调用主刮削容器的API
         import requests
-        scraper_api_url = "http://av-metadata-scraper:5001/api/process"
+        scraper_api_url = f"{API_BASE_URL}/api/process"
         
         logger.info(f"调用主刮削容器API处理 {len(files_to_process)} 个文件")
         
@@ -1036,4 +1044,330 @@ if __name__ == '__main__':
     
     # 启动应用
     logger.info("启动AutoJAV Web界面...")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    # 从环境变量获取端口，默认8080
+    web_port = int(os.environ.get('WEB_PORT', '8080'))
+    socketio.run(app, host='0.0.0.0', port=web_port, debug=True, allow_unsafe_werkzeug=True)return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/scrape', methods=['POST'])
+def scrape_file():
+    """刮削单个文件（代理到主容器）"""
+    try:
+        data = request.json
+        
+        # 调用主刮削容器的API
+        import requests
+        
+        # 在host网络模式下使用localhost
+        scraper_api_url = f"{API_BASE_URL}/api/scrape"
+        
+        try:
+            response = requests.post(
+                scraper_api_url,
+                json=data,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return jsonify(result)
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'刮削服务返回错误: {response.status_code}'
+                }), 500
+                
+        except requests.exceptions.ConnectionError:
+            logger.error("无法连接到刮削服务")
+            return jsonify({
+                'success': False,
+                'error': '刮削服务不可用，请确保主容器正在运行'
+            }), 503
+            
+    except Exception as e:
+        logger.error(f"刮削文件失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/process', methods=['POST'])
+def process_files():
+    """处理文件（调用主刮削容器）"""
+    try:
+        data = request.json
+        files = data.get('files', [])
+        
+        if not files:
+            return jsonify({'success': False, 'error': '没有指定要处理的文件'}), 400
+        
+        # 调用主刮削容器的API
+        import requests
+        
+        # 使用Docker容器名称作为主机名
+        scraper_api_url = f"{API_BASE_URL}/api/process"
+        
+        try:
+            response = requests.post(
+                scraper_api_url,
+                json={'files': files},
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return jsonify(result)
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'刮削服务返回错误: {response.status_code}'
+                }), 500
+                
+        except requests.exceptions.ConnectionError:
+            logger.error("无法连接到刮削服务，尝试本地处理")
+            # 如果无法连接到主容器，返回错误
+            return jsonify({
+                'success': False,
+                'error': '刮削服务不可用，请确保主容器正在运行'
+            }), 503
+            
+    except Exception as e:
+        logger.error(f"处理文件失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# WebSocket事件处理
+
+@socketio.on('connect')
+def handle_connect():
+    """客户端连接"""
+    logger.info('客户端已连接')
+    emit('connected', {'message': '连接成功'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """客户端断开"""
+    logger.info('客户端已断开')
+
+# 任务执行函数
+
+def run_scraping_task(task_id):
+    """运行刮削任务"""
+    global current_task, task_history
+    
+    try:
+        logger.info(f"开始执行任务 {task_id}")
+        config = load_config()
+        
+        # 扫描文件
+        supported_formats = config.get('supported_extensions', [
+            '.mp4', '.mkv', '.avi', '.wmv', '.mov', '.flv', '.webm', '.m4v', '.ts', '.m2ts'
+        ])
+        scanner = FileScanner(config['directories']['source'], supported_formats)
+        video_files = scanner.scan_directory()
+        
+        current_task['total'] = len(video_files)
+        
+        # 创建整理器
+        organizer = FileOrganizer(
+            target_directory=config['directories']['target'],
+            naming_pattern=config['organization'].get('naming_pattern', '{actress}/{code}/{code}.{ext}'),
+            conflict_resolution=ConflictResolution[config['organization'].get('conflict_resolution', 'rename').upper()],
+            create_metadata_files=config['organization'].get('save_metadata', True),
+            safe_mode=config['organization'].get('safe_mode', True)
+        )
+        
+        # 准备要处理的文件列表
+        files_to_process = []
+        for video_file in video_files:
+            files_to_process.append({
+                'filename': video_file.filename,
+                'path': str(video_file.file_path),
+                'extension': video_file.extension,
+                'size': video_file.file_size,
+                'detected_code': video_file.detected_code
+            })
+        
+        # 调用主刮削容器的API
+        import requests
+        scraper_api_url = f"{API_BASE_URL}/api/process"
+        
+        logger.info(f"调用主刮削容器API处理 {len(files_to_process)} 个文件")
+        
+        try:
+            # 发送处理请求到主刮削容器
+            response = requests.post(
+                scraper_api_url,
+                json={'files': files_to_process},
+                timeout=300  # 5分钟超时
+            )
+            
+            if response.status_code == 200:
+                api_result = response.json()
+                
+                if api_result.get('success'):
+                    results = api_result.get('results', [])
+                    
+                    # 更新任务进度
+                    for i, result in enumerate(results):
+                        current_task['processed'] = i + 1
+                        current_task['progress'] = int((i + 1) / len(results) * 100)
+                        current_task['results'].append({
+                            'file': result.get('file'),
+                            'success': result.get('success'),
+                            'message': result.get('message', ''),
+                            'metadata': result.get('metadata')
+                        })
+                        
+                        # 发送进度更新
+                        socketio.emit('task_progress', {
+                            'task_id': task_id,
+                            'progress': current_task['progress'],
+                            'processed': current_task['processed'],
+                            'total': current_task['total']
+                        })
+                        
+                        # 记录处理结果
+                        if result.get('success'):
+                            logger.info(f"成功处理: {result.get('file')}")
+                            if result.get('metadata'):
+                                actresses = result['metadata'].get('actresses', [])
+                                if actresses and actresses[0] != "未知女优":
+                                    logger.info(f"女优: {', '.join(actresses)}")
+                        else:
+                            logger.error(f"处理失败: {result.get('file')} - {result.get('error')}")
+                else:
+                    logger.error(f"API处理失败: {api_result.get('error')}")
+                    raise Exception(api_result.get('error'))
+            else:
+                logger.error(f"API请求失败: HTTP {response.status_code}")
+                raise Exception(f"API请求失败: HTTP {response.status_code}")
+                
+        except requests.exceptions.ConnectionError:
+            logger.error("无法连接到主刮削容器，使用本地处理（无元数据）")
+            # 如果API不可用，回退到本地处理（但不会有元数据）
+            for i, video_file in enumerate(video_files):
+                if current_task['status'] == 'stopping':
+                    break
+                
+                metadata = MovieMetadata(
+                    code=video_file.detected_code or "UNKNOWN",
+                    title=f"影片 - {video_file.filename}",
+                    actresses=["未知女优"],
+                    release_date=datetime.now().date(),
+                    studio="Unknown Studio"
+                )
+                
+                result = organizer.organize_file(video_file, metadata)
+                
+                current_task['processed'] = i + 1
+                current_task['progress'] = int((i + 1) / len(video_files) * 100)
+                current_task['results'].append({
+                    'file': video_file.filename,
+                    'success': result['success'],
+                    'message': result.get('message', '')
+                })
+        except Exception as e:
+            logger.error(f"处理过程中出错: {e}")
+            raise
+        
+        # 任务完成
+        current_task['status'] = 'completed'
+        current_task['end_time'] = datetime.now().isoformat()
+        
+        # 添加到历史
+        task_history.append(current_task.copy())
+        logger.info(f"任务 {task_id} 完成")
+        
+    except Exception as e:
+        logger.error(f"任务执行失败: {e}")
+        current_task['status'] = 'failed'
+        current_task['error'] = str(e)
+        current_task['end_time'] = datetime.now().isoformat()
+        task_history.append(current_task.copy())
+
+# 启动应用
+
+# ==================== 历史记录API代理 ====================
+
+@app.route('/api/history', methods=['GET'])
+def get_history():
+    """获取刮削历史"""
+    try:
+        # 转发请求到主API服务器
+        params = request.args.to_dict()
+        response = requests.get(f'{API_BASE_URL}/api/history', params=params, timeout=10)
+        
+        if response.status_code == 200:
+            return jsonify(response.json())
+        else:
+            return jsonify({'success': False, 'error': 'Failed to get history'}), response.status_code
+            
+    except Exception as e:
+        logger.error(f"获取历史记录失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/history/stats', methods=['GET'])
+def get_history_stats():
+    """获取历史统计"""
+    try:
+        response = requests.get(f'{API_BASE_URL}/api/history/stats', timeout=10)
+        
+        if response.status_code == 200:
+            return jsonify(response.json())
+        else:
+            return jsonify({'success': False, 'error': 'Failed to get stats'}), response.status_code
+            
+    except Exception as e:
+        logger.error(f"获取历史统计失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/history/export', methods=['GET'])
+def export_history():
+    """导出历史记录"""
+    try:
+        response = requests.get(f'{API_BASE_URL}/api/history/export', stream=True, timeout=30)
+        
+        if response.status_code == 200:
+            # 流式传输文件
+            def generate():
+                for chunk in response.iter_content(chunk_size=4096):
+                    yield chunk
+            
+            return Response(
+                generate(),
+                mimetype='text/csv',
+                headers={
+                    'Content-Disposition': 'attachment; filename=scrape_history.csv'
+                }
+            )
+        else:
+            return jsonify({'success': False, 'error': 'Failed to export history'}), response.status_code
+            
+    except Exception as e:
+        logger.error(f"导出历史记录失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/history/clear', methods=['POST'])
+def clear_history():
+    """清理历史记录"""
+    try:
+        data = request.json
+        response = requests.post(f'{API_BASE_URL}/api/history/clear', json=data, timeout=10)
+        
+        if response.status_code == 200:
+            return jsonify(response.json())
+        else:
+            return jsonify({'success': False, 'error': 'Failed to clear history'}), response.status_code
+            
+    except Exception as e:
+        logger.error(f"清理历史记录失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+if __name__ == '__main__':
+    # 确保必要的目录存在
+    Path('web/static').mkdir(parents=True, exist_ok=True)
+    Path('web/templates').mkdir(parents=True, exist_ok=True)
+    Path('config').mkdir(parents=True, exist_ok=True)
+    Path('logs').mkdir(parents=True, exist_ok=True)
+    
+    # 启动应用
+    logger.info("启动AutoJAV Web界面...")
+    # 从环境变量获取端口，默认8080
+    web_port = int(os.environ.get('WEB_PORT', '8080'))
+    socketio.run(app, host='0.0.0.0', port=web_port, debug=True, allow_unsafe_werkzeug=True)
