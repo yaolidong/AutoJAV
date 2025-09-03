@@ -71,6 +71,9 @@ async function startVNCLoginSession() {
             document.getElementById('vnc-web-url').textContent = webVncUrl;
             document.getElementById('vnc-client-url').textContent = clientVncUrl;
 
+            // **自动在新标签页中打开Web VNC**
+            window.open(webVncUrl, '_blank');
+
         } else {
             statusDiv.innerHTML = `<div class="alert alert-danger">启动失败: ${result.error}</div>`;
         }
