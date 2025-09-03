@@ -23,17 +23,12 @@ RUN pip3 install --no-cache-dir -r requirements_web.txt
 # 复制整个应用代码
 COPY . /app/
 
+# 复制并设置新的启动脚本
+COPY scripts/start_web.sh /app/start_web.sh
+RUN chmod +x /app/start_web.sh
+
 # 暴露Flask应用的端口
 EXPOSE 5000
 
-# 默认的Selenium镜像会启动VNC和浏览器
-# 我们需要一个脚本来同时启动我们的Flask应用
-# 创建一个新的启动脚本
-RUN echo '#!/bin/bash
-/opt/bin/entry_point.sh &
-python3 /app/web_app.py
-' > /app/start_app.sh && \
-    chmod +x /app/start_app.sh
-
 # 设置启动命令
-CMD ["/app/start_app.sh"]
+CMD ["/app/start_web.sh"]
