@@ -1,24 +1,38 @@
-# 使用官方的Selenium独立Chrome镜像作为基础
-# 它已经包含了Chrome, VNC, 和noVNC
-FROM selenium/standalone-chrome:latest
+# 使用支持ARM架构的Selenium镜像
+# seleniarm/standalone-chromium支持ARM64架构
+FROM seleniarm/standalone-chromium:latest
 
 # 切换到root用户以安装软件包
 USER root
 
-# 安装Python和pip
+# 安装Python和pip，以及构建依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
+    python3-venv \
+    python3-dev \
+    build-essential \
+    libxml2-dev \
+    libxslt1-dev \
+    gcc \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# 创建虚拟环境并激活
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 升级pip和setuptools
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # 设置工作目录
 WORKDIR /app
 
-# 复制Python依赖文件
-COPY requirements_web.txt ./
+# 复制Python依赖文件（包括被引用的requirements.txt）
+COPY requirements_web.txt requirements.txt ./
 
-# 安装Python依赖
-RUN pip3 install --no-cache-dir -r requirements_web.txt
+# 安装Python依赖（使用虚拟环境中的pip）
+RUN pip install --no-cache-dir -r requirements_web.txt
 
 # 复制整个应用代码
 COPY . /app/

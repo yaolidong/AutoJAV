@@ -61,6 +61,7 @@ task_queue = queue.Queue()
 current_task = None
 task_history = []
 log_queue = queue.Queue(maxsize=1000)
+vnc_login_manager = None  # VNC登录管理器
 
 # 自定义日志处理器，发送到Web界面
 class WebSocketLogHandler(logging.Handler):
@@ -89,10 +90,58 @@ ws_handler.setFormatter(logging.Formatter('%(message)s'))
 logging.getLogger().addHandler(ws_handler)
 
 def load_config():
-    """加载配置文件"""
+    """加载配置文件 - 支持YAML和TOML格式"""
+    # Try app_config.yaml first (our YAML config)
+    app_config_file = Path('config/app_config.yaml')
+    if app_config_file.exists():
+        with open(app_config_file, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+    
+    # Fallback to config.yaml
     if config_file.exists():
         with open(config_file, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+            content = f.read()
+            # Check if it's TOML format
+            if content.strip().startswith('['):
+                # Return default config for TOML format
+                return {
+                    'javdb': {
+                        'username': '',
+                        'password': '',
+                        'cookies_file': '/app/config/javdb_cookies.json'
+                    },
+                    'directories': {
+                        'source': '/app/source',
+                        'target': '/app/target',
+                        'config': '/app/config',
+                        'logs': '/app/logs'
+                    },
+                    'selenium': {
+                        'grid_url': 'http://localhost:4444',
+                        'vnc_url': 'http://localhost:7900',
+                        'browser': 'chrome',
+                        'headless': False,
+                        'timeout': 30
+                    },
+                    'processing': {
+                        'max_concurrent_files': 2,
+                        'max_concurrent_requests': 2,
+                        'max_concurrent_downloads': 2
+                    },
+                    'api': {
+                        'host': '0.0.0.0',
+                        'port': 5555
+                    },
+                    'web': {
+                        'host': '0.0.0.0',
+                        'port': 8899
+                    }
+                }
+            else:
+                # It's YAML format
+                return yaml.safe_load(content)
+    
+    # Return default config if no file found
     return {
         'directories': {
             'source': './source',
@@ -636,20 +685,172 @@ def javdb_proxy():
 def javdb_login():
     """Manages JAVDB login via a VNC session."""
     global vnc_login_manager
-    if not vnc_login_manager:
-        return jsonify({'success': False, 'error': 'VNC Login Manager not initialized'}), 500
+    
+    # 延迟初始化 VNC Login Manager
+    if vnc_login_manager is None:
+        try:
+            config = load_config()
+            config_dir = config.get('directories', {}).get('config', '/app/config')
+            vnc_login_manager = JavDBLoginVNC(
+                config_dir=config_dir
+            )
+            logger.info("VNC登录管理器初始化成功")
+        except Exception as e:
+            logger.error(f"VNC登录管理器初始化失败: {e}")
+            return jsonify({'success': False, 'error': f'Failed to initialize VNC Login Manager: {e}'}), 500
 
     try:
         data = request.json or {}
         action = data.get('action', 'start')
 
         if action == 'start':
-            result = vnc_login_manager.start_login_session()
+            # Generate login URL and instructions
+            result = vnc_login_manager.generate_login_url()
+            if result['success']:
+                # Return VNC and noVNC URLs for the user to access
+                result['vnc_url'] = 'http://localhost:7900'  # noVNC web interface
+                result['selenium_url'] = 'http://localhost:4444'  # Selenium Grid
+                result['message'] = 'Please open the VNC URL in a new tab to complete login'
             return jsonify(result)
         
         elif action == 'check':
-            result = vnc_login_manager.check_and_save_cookies()
-            return jsonify(result)
+            # Check and save cookies from browser
+            try:
+                from selenium import webdriver
+                from selenium.webdriver.chrome.options import Options
+                from datetime import datetime
+                import json
+                import time
+                
+                config = load_config()
+                config_dir = config.get('directories', {}).get('config', '/app/config')
+                
+                options = Options()
+                options.add_argument('--no-sandbox')
+                options.add_argument('--disable-dev-shm-usage')
+                
+                # Connect to the main Selenium Grid
+                selenium_urls = ['http://localhost:4444/wd/hub']
+                driver = None
+                
+                for selenium_url in selenium_urls:
+                    try:
+                        driver = webdriver.Remote(
+                            command_executor=selenium_url,
+                            options=options
+                        )
+                        logger.info(f"Connected to Selenium at {selenium_url}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"Failed to connect to {selenium_url}: {e}")
+                        continue
+                
+                if not driver:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Unable to connect to Selenium Grid. Please ensure browser is open.'
+                    })
+                
+                # Get current URL to check if we're on JavDB
+                current_url = driver.current_url
+                if 'javdb.com' not in current_url:
+                    driver.get('https://javdb.com')
+                    time.sleep(2)
+                
+                # Get cookies
+                cookies = driver.get_cookies()
+                driver.quit()
+                
+                if not cookies:
+                    return jsonify({
+                        'success': False,
+                        'error': 'No cookies found. Please log in to JavDB first.'
+                    })
+                
+                # Save cookies
+                cookie_file = Path(config_dir) / 'javdb_cookies.json'
+                cookie_data = {
+                    "cookies": cookies,
+                    "timestamp": datetime.now().isoformat(),
+                    "domain": "https://javdb.com"
+                }
+                
+                with open(cookie_file, 'w') as f:
+                    json.dump(cookie_data, f, indent=2)
+                
+                # Check if logged in
+                has_session = any(cookie.get('name') == '_jdb_session' for cookie in cookies)
+                
+                if has_session:
+                    return jsonify({
+                        'success': True,
+                        'message': 'Cookies已成功保存！',
+                        'cookie_count': len(cookies)
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Cookies已保存，但未找到登录会话。请先在浏览器中登录JavDB。'
+                    })
+                    
+            except Exception as e:
+                logger.error(f"Error checking/saving cookies: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': str(e)
+                })
+        
+        elif action == 'save':
+            # Save cookies from current browser session
+            try:
+                from selenium import webdriver
+                from selenium.webdriver.chrome.options import Options
+                from datetime import datetime
+                import json
+                import time
+                
+                options = Options()
+                options.add_argument('--no-sandbox')
+                options.add_argument('--disable-dev-shm-usage')
+                
+                # Connect to Selenium Grid
+                driver = webdriver.Remote(
+                    command_executor='http://localhost:4444/wd/hub',
+                    options=options
+                )
+                
+                # Navigate to JavDB to ensure we're on the right domain
+                driver.get('https://javdb.com')
+                time.sleep(2)
+                
+                # Get cookies
+                cookies = driver.get_cookies()
+                
+                # Save cookies
+                cookie_file = Path(config_dir) / 'javdb_cookies.json'
+                cookie_data = {
+                    "cookies": cookies,
+                    "timestamp": datetime.now().isoformat(),
+                    "domain": "https://javdb.com"
+                }
+                
+                with open(cookie_file, 'w') as f:
+                    json.dump(cookie_data, f, indent=2)
+                
+                driver.quit()
+                
+                # Check if logged in
+                has_session = any(cookie.get('name') == '_jdb_session' for cookie in cookies)
+                
+                return jsonify({
+                    'success': True,
+                    'cookie_count': len(cookies),
+                    'has_session': has_session,
+                    'message': 'Cookies saved successfully' if has_session else 'Cookies saved but no session found'
+                })
+            except Exception as e:
+                logger.error(f"Failed to save cookies: {e}")
+                return jsonify({'success': False, 'error': str(e)})
 
         else:
             return jsonify({'success': False, 'error': f'Unknown action: {action}'})
@@ -1042,11 +1243,23 @@ if __name__ == '__main__':
     Path('config').mkdir(parents=True, exist_ok=True)
     Path('logs').mkdir(parents=True, exist_ok=True)
     
+    # 初始化VNC登录管理器
+    try:
+        config = load_config()
+        config_dir = config.get('directories', {}).get('config', '/app/config')
+        vnc_login_manager = JavDBLoginVNC(
+            config_dir=config_dir
+        )
+        logger.info("VNC登录管理器初始化成功")
+    except Exception as e:
+        logger.error(f"VNC登录管理器初始化失败: {e}")
+        vnc_login_manager = None
+    
     # 启动应用
     logger.info("启动AutoJAV Web界面...")
     # 从环境变量获取端口，默认8080
     web_port = int(os.environ.get('WEB_PORT', '8080'))
-    socketio.run(app, host='0.0.0.0', port=web_port, debug=True, allow_unsafe_werkzeug=True)return jsonify({'success': False, 'error': str(e)}), 500
+    socketio.run(app, host='0.0.0.0', port=web_port, debug=True, allow_unsafe_werkzeug=True)
 
 @app.route('/api/scrape', methods=['POST'])
 def scrape_file():
@@ -1285,79 +1498,79 @@ def run_scraping_task(task_id):
 
 # ==================== 历史记录API代理 ====================
 
-@app.route('/api/history', methods=['GET'])
-def get_history():
-    """获取刮削历史"""
-    try:
+# @app.route('/api/history', methods=['GET'])
+# def get_history():
+#     """获取刮削历史"""
+#     try:
         # 转发请求到主API服务器
-        params = request.args.to_dict()
-        response = requests.get(f'{API_BASE_URL}/api/history', params=params, timeout=10)
-        
-        if response.status_code == 200:
-            return jsonify(response.json())
-        else:
-            return jsonify({'success': False, 'error': 'Failed to get history'}), response.status_code
-            
-    except Exception as e:
-        logger.error(f"获取历史记录失败: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/history/stats', methods=['GET'])
-def get_history_stats():
-    """获取历史统计"""
-    try:
-        response = requests.get(f'{API_BASE_URL}/api/history/stats', timeout=10)
-        
-        if response.status_code == 200:
-            return jsonify(response.json())
-        else:
-            return jsonify({'success': False, 'error': 'Failed to get stats'}), response.status_code
-            
-    except Exception as e:
-        logger.error(f"获取历史统计失败: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/history/export', methods=['GET'])
-def export_history():
-    """导出历史记录"""
-    try:
-        response = requests.get(f'{API_BASE_URL}/api/history/export', stream=True, timeout=30)
-        
-        if response.status_code == 200:
+#         params = request.args.to_dict()
+#         response = requests.get(f'{API_BASE_URL}/api/history', params=params, timeout=10)
+#         
+#         if response.status_code == 200:
+#             return jsonify(response.json())
+#         else:
+#             return jsonify({'success': False, 'error': 'Failed to get history'}), response.status_code
+#             
+#     except Exception as e:
+#         logger.error(f"获取历史记录失败: {e}")
+#         return jsonify({'success': False, 'error': str(e)}), 500
+# 
+# @app.route('/api/history/stats', methods=['GET'])
+# def get_history_stats():
+#     """获取历史统计"""
+#     try:
+#         response = requests.get(f'{API_BASE_URL}/api/history/stats', timeout=10)
+#         
+#         if response.status_code == 200:
+#             return jsonify(response.json())
+#         else:
+#             return jsonify({'success': False, 'error': 'Failed to get stats'}), response.status_code
+#             
+#     except Exception as e:
+#         logger.error(f"获取历史统计失败: {e}")
+#         return jsonify({'success': False, 'error': str(e)}), 500
+# 
+# @app.route('/api/history/export', methods=['GET'])
+# def export_history():
+#     """导出历史记录"""
+#     try:
+#         response = requests.get(f'{API_BASE_URL}/api/history/export', stream=True, timeout=30)
+#         
+#         if response.status_code == 200:
             # 流式传输文件
-            def generate():
-                for chunk in response.iter_content(chunk_size=4096):
-                    yield chunk
-            
-            return Response(
-                generate(),
-                mimetype='text/csv',
-                headers={
-                    'Content-Disposition': 'attachment; filename=scrape_history.csv'
-                }
-            )
-        else:
-            return jsonify({'success': False, 'error': 'Failed to export history'}), response.status_code
-            
-    except Exception as e:
-        logger.error(f"导出历史记录失败: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/history/clear', methods=['POST'])
-def clear_history():
-    """清理历史记录"""
-    try:
-        data = request.json
-        response = requests.post(f'{API_BASE_URL}/api/history/clear', json=data, timeout=10)
-        
-        if response.status_code == 200:
-            return jsonify(response.json())
-        else:
-            return jsonify({'success': False, 'error': 'Failed to clear history'}), response.status_code
-            
-    except Exception as e:
-        logger.error(f"清理历史记录失败: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+#             def generate():
+#                 for chunk in response.iter_content(chunk_size=4096):
+#                     yield chunk
+#             
+#             return Response(
+#                 generate(),
+#                 mimetype='text/csv',
+#                 headers={
+#                     'Content-Disposition': 'attachment; filename=scrape_history.csv'
+#                 }
+#             )
+#         else:
+#             return jsonify({'success': False, 'error': 'Failed to export history'}), response.status_code
+#             
+#     except Exception as e:
+#         logger.error(f"导出历史记录失败: {e}")
+#         return jsonify({'success': False, 'error': str(e)}), 500
+# 
+# @app.route('/api/history/clear', methods=['POST'])
+# def clear_history():
+#     """清理历史记录"""
+#     try:
+#         data = request.json
+#         response = requests.post(f'{API_BASE_URL}/api/history/clear', json=data, timeout=10)
+#         
+#         if response.status_code == 200:
+#             return jsonify(response.json())
+#         else:
+#             return jsonify({'success': False, 'error': 'Failed to clear history'}), response.status_code
+#             
+#     except Exception as e:
+#         logger.error(f"清理历史记录失败: {e}")
+#         return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     # 确保必要的目录存在
@@ -1365,6 +1578,18 @@ if __name__ == '__main__':
     Path('web/templates').mkdir(parents=True, exist_ok=True)
     Path('config').mkdir(parents=True, exist_ok=True)
     Path('logs').mkdir(parents=True, exist_ok=True)
+    
+    # 初始化VNC登录管理器
+    try:
+        config = load_config()
+        config_dir = config.get('directories', {}).get('config', '/app/config')
+        vnc_login_manager = JavDBLoginVNC(
+            config_dir=config_dir
+        )
+        logger.info("VNC登录管理器初始化成功")
+    except Exception as e:
+        logger.error(f"VNC登录管理器初始化失败: {e}")
+        vnc_login_manager = None
     
     # 启动应用
     logger.info("启动AutoJAV Web界面...")

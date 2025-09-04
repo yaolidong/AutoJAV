@@ -55,22 +55,43 @@ class ConfigManager:
         if self._config_data is not None:
             return self._config_data
         
-        # Load from file
+        # Try app_config.yaml first
+        app_config_path = Path(self.config_file).parent / 'app_config.yaml'
         config_path = Path(self.config_file)
-        if not config_path.exists():
+        
+        if app_config_path.exists():
+            try:
+                with open(app_config_path, 'r', encoding='utf-8') as f:
+                    self._config_data = yaml.safe_load(f) or {}
+                self.logger.info(f"Loaded config from: {app_config_path}")
+            except yaml.YAMLError as e:
+                self.logger.error(f"Invalid YAML in app config file: {e}")
+                self._config_data = self._get_default_config()
+            except Exception as e:
+                self.logger.error(f"Error reading app config file: {e}")
+                self._config_data = self._get_default_config()
+        elif not config_path.exists():
             self.logger.warning(f"Config file not found: {config_path}")
             self._config_data = self._get_default_config()
         else:
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
-                    self._config_data = yaml.safe_load(f) or {}
-                self.logger.info(f"Loaded config from: {config_path}")
+                    content = f.read()
+                
+                # Check if it's TOML format (Selenium Grid config)
+                if content.strip().startswith('['):
+                    self.logger.info("Detected TOML format config (Selenium Grid), using default app config")
+                    self._config_data = self._get_default_config()
+                else:
+                    # Parse as YAML
+                    self._config_data = yaml.safe_load(content) or {}
+                    self.logger.info(f"Loaded config from: {config_path}")
             except yaml.YAMLError as e:
                 self.logger.error(f"Invalid YAML in config file: {e}")
-                raise
+                self._config_data = self._get_default_config()
             except Exception as e:
                 self.logger.error(f"Error reading config file: {e}")
-                raise
+                self._config_data = self._get_default_config()
         
         # Override with environment variables
         self._apply_env_overrides()

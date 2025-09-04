@@ -170,9 +170,14 @@ class JavDBLoginManager:
                 cookie_data = json.load(f)
             
             # Check if cookies are not too old (e.g., 30 days)
-            timestamp = datetime.fromisoformat(cookie_data.get("timestamp", ""))
-            if datetime.now() - timestamp > timedelta(days=30):
-                logger.warning("Cookies are older than 30 days, may need re-login")
+            timestamp_str = cookie_data.get("timestamp")
+            if timestamp_str:
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_str)
+                    if datetime.now() - timestamp > timedelta(days=30):
+                        logger.warning("Cookies are older than 30 days, may need re-login")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid timestamp format: {e}")
             
             return cookie_data.get("cookies", [])
             

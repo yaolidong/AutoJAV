@@ -224,7 +224,15 @@ class ScraperFactory:
             # Create WebDriver manager if not provided
             if webdriver_manager is None:
                 webdriver_config = self._get_webdriver_config()
-                webdriver_manager = WebDriverManager(**webdriver_config)
+                
+                # Get proxy from the main network configuration
+                network_config = self.config.get('network', {})
+                proxy_url = network_config.get('proxy_url')
+                
+                webdriver_manager = WebDriverManager(
+                    proxy_url=proxy_url,
+                    **webdriver_config
+                )
                 # Start the WebDriver
                 webdriver_manager.start_driver()
             
@@ -234,7 +242,7 @@ class ScraperFactory:
                 login_manager = self._create_login_manager(webdriver_manager)
             
             # Get config directory from configuration
-            config_dir = self.config.get('directories', {}).get('config', '/app/config')
+            config_dir = self.config.get('directories', {}).get('config', 'config')
             
             # Create JavDB scraper with config_dir for cookie support
             javdb_scraper = JavDBScraper(
@@ -269,7 +277,10 @@ class ScraperFactory:
             # Create HTTP client if not provided
             if http_client is None:
                 http_config = self._get_http_client_config()
-                http_client = HttpClient(**http_config)
+                # Get proxy from the main network configuration
+                network_config = self.config.get('network', {})
+                proxy_url = network_config.get('proxy_url')
+                http_client = HttpClient(proxy_url=proxy_url, **http_config)
             
             # Create JavLibrary scraper
             javlibrary_scraper = JavLibraryScraper(

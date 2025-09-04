@@ -474,3 +474,12 @@ class MetadataScraper:
         """Cleanup resources."""
         if hasattr(self, 'executor'):
             self.executor.shutdown(wait=False)
+
+    async def cleanup(self):
+        """Clean up resources used by all scrapers."""
+        self.logger.info("Cleaning up all scraper resources...")
+        for scraper in self.scrapers:
+            if hasattr(scraper, 'cleanup') and asyncio.iscoroutinefunction(scraper.cleanup):
+                await scraper.cleanup()
+            elif hasattr(scraper, 'cleanup'):
+                scraper.cleanup()

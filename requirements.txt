@@ -2,14 +2,14 @@
 aiohttp==3.9.1
 aiofiles==23.2.1
 beautifulsoup4==4.12.2
-lxml==4.9.3
+lxml==5.2.0
 
 # Web automation
 selenium==4.16.0
 webdriver-manager==4.0.1
 
 # Image processing
-Pillow==10.1.0
+Pillow==10.4.0
 requests==2.31.0
 
 # Configuration and data

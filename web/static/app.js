@@ -401,18 +401,52 @@ async function scrapeFile(index) {
         
         const result = await response.json();
         
+        // 打印响应结果以便调试
+        console.log('刮削响应:', result);
+        
         if (result.success) {
-            showToast(`文件 ${file.filename} 刮削成功`, 'success');
+            // 检查是否有文件组织信息
+            if (result.data && result.data.target_path) {
+                showToast(`文件 ${file.filename} 刮削成功，已移动到: ${result.data.target_path}`, 'success');
+                console.log(`文件已移动到: ${result.data.target_path}`);
+                // 立即刷新历史记录
+                if (typeof loadHistory === 'function') {
+                    loadHistory();
+                }
+            } else if (result.metadata) {
+                showToast(`文件 ${file.filename} 刮削成功，已获取元数据`, 'success');
+                console.log('已获取元数据:', result.metadata);
+            } else {
+                showToast(`文件 ${file.filename} 刮削成功`, 'success');
+            }
+            
             // 更新行显示
             const row = document.getElementById(`file-${index}`);
             row.classList.add('table-success');
             setTimeout(() => {
                 row.classList.remove('table-success');
-                // 刷新文件列表
+                // 刷新文件列表，因为文件可能已被移动
                 scanFiles();
             }, 2000);
         } else {
-            showToast(`刮削失败: ${result.error}`, 'danger');
+            // 检查失败原因
+            if (result.details && result.details.reason === 'invalid_actress') {
+                console.warn('无效女优信息:', result.details.actresses);
+                showToast(`文件 ${file.filename} 保留在原位：无有效女优信息`, 'warning');
+                // 更新行显示为警告状态
+                const row = document.getElementById(`file-${index}`);
+                row.classList.add('table-warning');
+                setTimeout(() => {
+                    row.classList.remove('table-warning');
+                }, 3000);
+            } else {
+                console.error('刮削失败:', result.error || result.message);
+                showToast(`刮削失败: ${result.error || result.message}`, 'danger');
+            }
+            // 检查是否有历史记录更新（即使失败也会记录）
+            if (typeof loadHistory === 'function') {
+                loadHistory();
+            }
         }
         
     } catch (error) {
@@ -483,8 +517,13 @@ async function scrapeSelectedFiles() {
     showToast(`批量刮削完成: 成功 ${successCount} 个, 失败 ${failCount} 个`, 
               failCount > 0 ? 'warning' : 'success');
     
-    // 刷新文件列表
-    setTimeout(() => scanFiles(), 1000);
+    // 刷新文件列表和历史记录
+    setTimeout(() => {
+        scanFiles();
+        if (typeof loadHistory === 'function') {
+            loadHistory();
+        }
+    }, 1000);
 }
 
 // 切换实时监控
@@ -1590,7 +1629,7 @@ loadHistory = async function(search = '', status = '') {
         const data = await response.json();
         
         if (data.success) {
-            historyData = data.entries || [];
+            historyData = data.data || data.entries || [];
             displayHistory();
             updateHistoryStats();
         }
@@ -1626,7 +1665,7 @@ function displayHistory() {
                 <td>${statusBadge}</td>
                 <td title="${entry.original_path}">${entry.original_filename}</td>
                 <td>${entry.detected_code || '-'}</td>
-                <td title="${entry.new_path || ''}">${entry.new_filename || '-'}</td>
+                <td title="${entry.organized_path || entry.new_path || ''}">${entry.new_filename || '-'}</td>
                 <td>${entry.title || '-'}</td>
                 <td>${actresses || '-'}</td>
                 <td>
@@ -1659,8 +1698,8 @@ async function updateHistoryStats() {
         const response = await fetch('/api/history/stats');
         const data = await response.json();
         
-        if (data.success && data.stats) {
-            const stats = data.stats;
+        if (data.success && (data.data || data.stats)) {
+            const stats = data.data || data.stats;
             document.getElementById('history-total').textContent = stats.total_processed || 0;
             document.getElementById('history-success').textContent = stats.successful || 0;
             document.getElementById('history-failed').textContent = stats.failed || 0;
@@ -1755,7 +1794,7 @@ window.viewHistoryDetail = viewHistoryDetail;
 
 // 清空历史
 clearHistory = async function() {
-    if (!confirm('确定要清空所有历史记录吗？')) {
+    if (!confirm('确定要清空所有历史记录吗？此操作不可恢复！')) {
         return;
     }
     
@@ -1764,13 +1803,14 @@ clearHistory = async function() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify({ days: 0 })  // days=0 表示清空所有记录
         });
         
         const result = await response.json();
         
         if (result.success) {
-            showToast('历史记录已清空', 'success');
+            showToast(result.message || '历史记录已清空', 'success');
             loadHistory();
         } else {
             showToast('清空失败: ' + result.error, 'danger');
@@ -1814,7 +1854,14 @@ viewHistoryDetail = function(encodedData) {
                                 <tr><td><strong>处理状态:</strong></td><td>${getStatusBadge(entry.status)}</td></tr>
                                 <tr><td><strong>识别代码:</strong></td><td>${entry.detected_code || '-'}</td></tr>
                                 <tr><td><strong>新文件名:</strong></td><td>${entry.new_filename || '-'}</td></tr>
-                                <tr><td><strong>新路径:</strong></td><td>${entry.new_path || '-'}</td></tr>
+                                <tr><td><strong>整理后路径:</strong></td><td>${
+                                    // 如果organized_path和original_path相同，说明文件没有被整理
+                                    (entry.organized_path && entry.organized_path !== entry.original_path) 
+                                        ? entry.organized_path 
+                                        : (entry.new_path && entry.new_path !== entry.original_path) 
+                                            ? entry.new_path 
+                                            : '<span class="text-muted">未整理（保留在源目录）</span>'
+                                }</td></tr>
                                 <tr><td><strong>标题:</strong></td><td>${entry.title || '-'}</td></tr>
                                 <tr><td><strong>演员:</strong></td><td>${entry.actresses ? entry.actresses.join(', ') : '-'}</td></tr>
                                 <tr><td><strong>制作商:</strong></td><td>${entry.studio || '-'}</td></tr>

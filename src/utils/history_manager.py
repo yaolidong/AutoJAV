@@ -374,27 +374,43 @@ class HistoryManager:
     
     def clear_old_entries(self, days: int = 90) -> int:
         """
-        Clear entries older than specified days.
+        Clear entries older than specified days, or all entries if days=0.
         
         Args:
-            days: Number of days to keep
+            days: Number of days to keep (0 to clear all)
             
         Returns:
             Number of entries removed
         """
-        cutoff_date = datetime.now() - timedelta(days=days)
-        
         with self.lock:
             original_count = len(self.history)
-            self.history = [
-                entry for entry in self.history
-                if entry.process_time >= cutoff_date
-            ]
-            removed = original_count - len(self.history)
+            
+            if days == 0:
+                # Clear all entries
+                self.history = []
+                removed = original_count
+                # Clear stats cache when clearing all entries
+                self._stats_cache = None
+                self._stats_cache_time = None
+            else:
+                # Clear entries older than specified days
+                cutoff_date = datetime.now() - timedelta(days=days)
+                self.history = [
+                    entry for entry in self.history
+                    if entry.process_time >= cutoff_date
+                ]
+                removed = original_count - len(self.history)
+                # Clear stats cache when removing entries
+                if removed > 0:
+                    self._stats_cache = None
+                    self._stats_cache_time = None
         
         if removed > 0:
             self.save_history()
-            self.logger.info(f"Removed {removed} old history entries")
+            if days == 0:
+                self.logger.info(f"Cleared all {removed} history entries")
+            else:
+                self.logger.info(f"Removed {removed} old history entries")
         
         return removed
     

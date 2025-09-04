@@ -50,6 +50,8 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     # Additional utilities
     procps \
+    # Timezone data
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chromium instead of Chrome for better ARM compatibility

@@ -330,7 +330,10 @@ class JavDBLoginVNC:
             with open(self.cookie_file, 'r') as f:
                 cookie_data = json.load(f)
             
-            timestamp = datetime.fromisoformat(cookie_data.get("timestamp", ""))
+            timestamp_str = cookie_data.get("timestamp")
+            if not timestamp_str:
+                raise ValueError("No timestamp in cookie data")
+            timestamp = datetime.fromisoformat(timestamp_str)
             age_days = (datetime.now() - timestamp).days
             
             return {

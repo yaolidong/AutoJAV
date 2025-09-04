@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Selenium Grid 浏览器控制面板</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .status-section {
+            background: #f7f8fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .status-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .status-label {
+            color: #555;
+            font-weight: 500;
+        }
+        
+        .status-value {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-indicator.online {
+            background: #10b981;
+        }
+        
+        .status-indicator.offline {
+            background: #ef4444;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .control-section {
+            margin-bottom: 30px;
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            color: #555;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #555;
+        }
+        
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+        
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #059669;
+        }
+        
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+        
+        .vnc-section {
+            background: #f0f9ff;
+            border: 2px dashed #3b82f6;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .vnc-link {
+            display: inline-block;
+            margin: 15px 0;
+            padding: 15px 30px;
+            background: white;
+            border-radius: 8px;
+            color: #3b82f6;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 18px;
+            transition: all 0.3s;
+            box-shadow: 0 5px 15px rgba(59, 130, 246, 0.2);
+        }
+        
+        .vnc-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
+        }
+        
+        .vnc-password {
+            background: #fef3c7;
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-weight: bold;
+            color: #92400e;
+        }
+        
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        .action-card {
+            background: #f7f8fa;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+        
+        .action-card:hover {
+            border-color: #667eea;
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        
+        .action-icon {
+            font-size: 30px;
+            margin-bottom: 10px;
+        }
+        
+        .action-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        
+        .action-desc {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .log-section {
+            background: #1f2937;
+            color: #10b981;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            height: 200px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            opacity: 0;
+            animation: fadeIn 0.5s forwards;
+        }
+        
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌐 Selenium Grid 浏览器控制面板</h1>
+        <p class="subtitle">手动控制和管理Selenium Grid中的Chrome浏览器</p>
+        
+        <!-- 状态显示 -->
+        <div class="status-section">
+            <div class="status-item">
+                <span class="status-label">Selenium Grid 状态</span>
+                <span class="status-value">
+                    <span class="status-indicator online"></span>
+                    <span id="grid-status">在线</span>
+                </span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Grid URL</span>
+                <span class="status-value">http://localhost:4444</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">VNC端口</span>
+                <span class="status-value">7900</span>
+            </div>
+        </div>
+        
+        <!-- VNC访问 -->
+        <div class="vnc-section">
+            <h3>📺 查看浏览器画面</h3>
+            <a href="http://localhost:7900" target="_blank" class="vnc-link">
+                打开 VNC 界面
+            </a>
+            <p>密码: <span class="vnc-password">secret</span></p>
+            <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                点击上方链接后，输入密码即可看到Chrome浏览器界面
+            </p>
+        </div>
+        
+        <!-- 控制按钮 -->
+        <div class="control-section">
+            <div class="control-group">
+                <label for="url-input">访问网址</label>
+                <input type="text" id="url-input" placeholder="https://www.google.com" value="https://www.google.com">
+            </div>
+            
+            <div class="button-group">
+                <button class="btn-primary" onclick="openBrowser()">
+                    🚀 打开浏览器
+                </button>
+                <button class="btn-success" onclick="navigateToUrl()">
+                    🔗 访问网址
+                </button>
+                <button class="btn-secondary" onclick="testNetwork()">
+                    🧪 测试网络
+                </button>
+                <button class="btn-danger" onclick="closeBrowser()">
+                    ❌ 关闭浏览器
+                </button>
+            </div>
+        </div>
+        
+        <!-- 快速操作 -->
+        <div class="quick-actions">
+            <div class="action-card" onclick="quickAction('google')">
+                <div class="action-icon">🔍</div>
+                <div class="action-title">Google</div>
+                <div class="action-desc">测试基本网络连接</div>
+            </div>
+            <div class="action-card" onclick="quickAction('javdb')">
+                <div class="action-icon">🎬</div>
+                <div class="action-title">JavDB</div>
+                <div class="action-desc">测试JavDB访问</div>
+            </div>
+            <div class="action-card" onclick="quickAction('javlibrary')">
+                <div class="action-icon">📚</div>
+                <div class="action-title">JavLibrary</div>
+                <div class="action-desc">测试JavLibrary访问</div>
+            </div>
+            <div class="action-card" onclick="quickAction('login')">
+                <div class="action-icon">🔐</div>
+                <div class="action-title">登录测试</div>
+                <div class="action-desc">测试登录功能</div>
+            </div>
+        </div>
+        
+        <!-- 日志输出 -->
+        <div class="log-section" id="log-output">
+            <div class="log-entry">欢迎使用Selenium Grid浏览器控制面板</div>
+            <div class="log-entry">请先确保Docker容器正在运行...</div>
+        </div>
+    </div>
+    
+    <script>
+        let currentSession = null;
+        
+        function addLog(message, type = 'info') {
+            const logOutput = document.getElementById('log-output');
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            const timestamp = new Date().toLocaleTimeString();
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            logEntry.style.color = type === 'error' ? '#ef4444' : type === 'success' ? '#10b981' : '#9ca3af';
+            logOutput.appendChild(logEntry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+        
+        async function openBrowser() {
+            addLog('正在启动浏览器...');
+            try {
+                // 这里需要后端API支持，先显示操作步骤
+                addLog('1. 运行: python scripts/open_grid_browser.py', 'success');
+                addLog('2. 或者在终端运行上述Python脚本');
+                addLog('3. 浏览器将在Selenium Grid中启动');
+                addLog('4. 通过VNC界面查看浏览器', 'success');
+            } catch (error) {
+                addLog('启动失败: ' + error.message, 'error');
+            }
+        }
+        
+        function navigateToUrl() {
+            const url = document.getElementById('url-input').value;
+            if (!url) {
+                addLog('请输入要访问的网址', 'error');
+                return;
+            }
+            addLog(`导航到: ${url}`);
+            addLog('请在VNC界面中查看结果', 'success');
+        }
+        
+        function testNetwork() {
+            addLog('开始网络测试...');
+            addLog('测试 Google.com...');
+            addLog('测试 JavDB.com...');
+            addLog('测试 JavLibrary.com...');
+            addLog('请查看VNC界面获取详细结果', 'success');
+        }
+        
+        function closeBrowser() {
+            addLog('关闭浏览器会话...');
+            addLog('浏览器已关闭', 'success');
+        }
+        
+        function quickAction(action) {
+            const urls = {
+                'google': 'https://www.google.com',
+                'javdb': 'https://javdb.com',
+                'javlibrary': 'https://www.javlibrary.com',
+                'login': 'https://javdb.com/login'
+            };
+            
+            if (urls[action]) {
+                document.getElementById('url-input').value = urls[action];
+                addLog(`快速访问: ${urls[action]}`);
+                navigateToUrl();
+            }
+        }
+        
+        // 检查Grid状态
+        async function checkGridStatus() {
+            try {
+                const response = await fetch('http://localhost:4444/status');
+                if (response.ok) {
+                    document.getElementById('grid-status').textContent = '在线';
+                    document.querySelector('.status-indicator').className = 'status-indicator online';
+                } else {
+                    throw new Error('Grid离线');
+                }
+            } catch (error) {
+                document.getElementById('grid-status').textContent = '离线';
+                document.querySelector('.status-indicator').className = 'status-indicator offline';
+                addLog('Selenium Grid未响应，请确保容器正在运行', 'error');
+            }
+        }
+        
+        // 页面加载时检查状态
+        window.onload = function() {
+            checkGridStatus();
+            setInterval(checkGridStatus, 10000); // 每10秒检查一次
+        };
+    </script>
+</body>
+</html>

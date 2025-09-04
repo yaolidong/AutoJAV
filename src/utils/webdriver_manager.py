@@ -50,6 +50,13 @@ class WebDriverManager:
         self._driver: Optional[webdriver.Chrome] = None
         self._service: Optional[Service] = None
     
+    @property
+    def driver(self) -> Optional[webdriver.Chrome]:
+        """Get the current WebDriver instance."""
+        if self._driver is None:
+            self.start_driver()
+        return self._driver
+    
     def __enter__(self):
         """Context manager entry."""
         self.start_driver()
@@ -76,12 +83,13 @@ class WebDriverManager:
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
-        options.add_argument('--disable-web-security')
+        # Removed --disable-web-security as it can cause connection issues
         options.add_argument('--disable-features=VizDisplayCompositor')
         options.add_argument('--disable-extensions')
         options.add_argument('--disable-plugins')
-        options.add_argument('--disable-images')  # Don't load images for faster loading
-        options.add_argument('--disable-javascript')  # Disable JS if not needed
+        # Note: Images and JavaScript are required for JavDB to work properly
+        # options.add_argument('--disable-images')  # Don't load images for faster loading
+        # options.add_argument('--disable-javascript')  # Disable JS if not needed
         
         # User agent
         if self.user_agent:
@@ -110,6 +118,7 @@ class WebDriverManager:
         # Disable automation indicators
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
+        options.add_argument('--disable-blink-features=AutomationControlled')
         
         return options
     
@@ -128,19 +137,34 @@ class WebDriverManager:
             return self._driver
         
         try:
-            # Get ChromeDriver path
-            if os.path.exists('/usr/local/bin/chromedriver'):
-                # Use system chromedriver (Docker)
-                driver_path = '/usr/local/bin/chromedriver'
-            else:
-                # Use webdriver-manager to download
-                driver_path = ChromeDriverManager().install()
-            
-            self._service = Service(driver_path)
             options = self._get_chrome_options()
             
-            self.logger.info("Starting Chrome WebDriver...")
-            self._driver = webdriver.Chrome(service=self._service, options=options)
+            # Check if we should use Selenium Grid (in Docker environment)
+            selenium_grid_url = os.environ.get('SELENIUM_HUB_URL', os.environ.get('SELENIUM_GRID_URL', 'http://selenium-grid:4444/wd/hub'))
+            
+            # Try to connect to Selenium Grid first
+            try:
+                self.logger.info(f"Connecting to Selenium Grid at {selenium_grid_url}...")
+                self._driver = webdriver.Remote(
+                    command_executor=selenium_grid_url,
+                    options=options
+                )
+                self.logger.info("Successfully connected to Selenium Grid")
+            except Exception as grid_error:
+                self.logger.warning(f"Failed to connect to Selenium Grid: {grid_error}")
+                self.logger.info("Falling back to local Chrome driver...")
+                
+                # Fallback to local Chrome driver
+                # Get ChromeDriver path
+                if os.path.exists('/usr/local/bin/chromedriver'):
+                    # Use system chromedriver (Docker)
+                    driver_path = '/usr/local/bin/chromedriver'
+                else:
+                    # Use webdriver-manager to download
+                    driver_path = ChromeDriverManager().install()
+                
+                self._service = Service(driver_path)
+                self._driver = webdriver.Chrome(service=self._service, options=options)
             
             # Set timeouts
             self._driver.implicitly_wait(self.timeout)

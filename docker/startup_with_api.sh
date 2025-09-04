@@ -25,7 +25,7 @@ fi
 # Function to handle shutdown
 cleanup() {
     echo "Shutting down services..."
-    kill $API_PID $MAIN_PID 2>/dev/null || true
+    kill $API_PID 2>/dev/null || true
     exit 0
 }
 
@@ -40,10 +40,10 @@ API_PID=$!
 # Give API server time to start
 sleep 3
 
-# Start main application
-echo "Starting main scraper application..."
-python /app/main.py &
-MAIN_PID=$!
+# Start main application (commented out - only run API server)
+# echo "Starting main scraper application..."
+# python /app/main.py &
+# MAIN_PID=$!
 
-# Wait for both processes
-wait $API_PID $MAIN_PID
+# Wait for API server process
+wait $API_PID

@@ -68,11 +68,7 @@ class HttpClient:
     async def _ensure_session(self):
         """Ensure the HTTP session is created."""
         if self._session is None or self._session.closed:
-            connector_kwargs = {}
-            if self.proxy_url:
-                connector_kwargs['trust_env'] = True
-            
-            connector = aiohttp.TCPConnector(**connector_kwargs)
+            connector = aiohttp.TCPConnector()
             
             self._session = ClientSession(
                 connector=connector,

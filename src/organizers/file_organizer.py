@@ -103,6 +103,20 @@ class FileOrganizer:
         try:
             self.logger.info(f"Organizing file: {video_file.filename}")
             
+            # Validate metadata has valid actress information
+            if not self._has_valid_actress(metadata):
+                self.logger.warning(f"No valid actress found for {video_file.filename}, skipping organization")
+                self.stats['files_skipped'] += 1
+                return self._create_result(
+                    False, 
+                    "No valid actress information found - file kept in original location",
+                    {
+                        'reason': 'invalid_actress',
+                        'original_path': str(video_file.file_path),
+                        'actresses': metadata.actresses if metadata.actresses else []
+                    }
+                )
+            
             # Generate target path
             pattern = custom_pattern or self.naming_pattern
             target_path = self._generate_target_path(video_file, metadata, pattern)
@@ -265,6 +279,36 @@ class FileOrganizer:
             self.logger.error(f"Error generating target path: {e}")
             return None
     
+    def _has_valid_actress(self, metadata: MovieMetadata) -> bool:
+        """
+        Check if metadata contains valid actress information.
+        
+        Args:
+            metadata: Movie metadata
+            
+        Returns:
+            True if at least one valid actress is found, False otherwise
+        """
+        # Invalid actress names that should not be used for folders
+        invalid_names = ['Censored', 'censored', 'CENSORED', 'Uncensored', 'uncensored', 'UNCENSORED', 
+                        'Western', 'western', '暂无', '未知', 'Unknown', 'N/A', '-', '---',
+                        '有碼', '有码', '無碼', '无码', '素人']
+        
+        # Check if actresses list is empty
+        if not metadata.actresses:
+            self.logger.warning(f"No actresses found in metadata for {metadata.code}")
+            return False
+        
+        # Check if any actress is valid
+        for actress in metadata.actresses:
+            if actress and actress not in invalid_names:
+                self.logger.debug(f"Found valid actress: {actress}")
+                return True
+        
+        # All actresses are invalid
+        self.logger.warning(f"All actress names are invalid for {metadata.code}: {metadata.actresses}")
+        return False
+    
     def _get_primary_actress(self, metadata: MovieMetadata) -> str:
         """
         Get primary actress name for directory structure.
@@ -276,17 +320,25 @@ class FileOrganizer:
             Primary actress name (sanitized)
         """
         # Invalid actress names that should not be used for folders
-        invalid_names = ['Censored', 'censored', 'CENSORED', 'Uncensored', 'uncensored', 'UNCENSORED', 'Western', 'western', '暂无', '未知', 'Unknown', 'N/A', '-', '---']
+        invalid_names = ['Censored', 'censored', 'CENSORED', 'Uncensored', 'uncensored', 'UNCENSORED', 
+                        'Western', 'western', '暂无', '未知', 'Unknown', 'N/A', '-', '---',
+                        '有碼', '有码', '無碼', '无码', '素人']
+        
+        # Log actresses for debugging
+        self.logger.debug(f"Actresses from metadata: {metadata.actresses}")
         
         if not metadata.actresses:
+            self.logger.warning(f"No actresses found for {metadata.code}, using 'Unknown'")
             return "Unknown"
         
         # Find first valid actress name
         for actress in metadata.actresses:
             if actress and actress not in invalid_names:
+                self.logger.info(f"Using actress '{actress}' for directory structure")
                 return self._sanitize_filename(actress)
         
         # If all actress names are invalid, use default
+        self.logger.warning(f"All actress names are invalid: {metadata.actresses}, using 'Unknown'")
         return "Unknown"
     
     def _get_actresses_string(self, metadata: MovieMetadata) -> str:
