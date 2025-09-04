@@ -2,7 +2,7 @@ services:
   selenium-grid:
     image: seleniarm/standalone-chromium:latest
     container_name: selenium-grid-standalone
-    restart: unless-stopped
+    restart: always  # Always restart on NAS
     # 使用host网络模式
     network_mode: host
     # 环境变量，设置会话超时时间为600秒（10分钟）
@@ -16,7 +16,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: av-metadata-scraper
-    restart: unless-stopped
+    restart: always  # Always restart on NAS
     # 确保在selenium-grid启动之后再启动本项目
     depends_on:
       - selenium-grid
@@ -71,14 +71,14 @@ services:
       - CREATE_THUMBNAILS=${CREATE_THUMBNAILS:-false}
     
     
-    # Resource limits (CPU limits removed for NAS compatibility)
+    # Resource limits (optimized for NAS)
     deploy:
       resources:
         limits:
-          memory: ${MEMORY_LIMIT:-2G}
+          memory: ${MEMORY_LIMIT:-1G}  # Reduced for NAS
           # cpus removed - not supported on some NAS kernels
         reservations:
-          memory: 512M
+          memory: 256M  # Reduced for NAS
           # cpus removed - not supported on some NAS kernels
     
     # Security options
@@ -86,13 +86,13 @@ services:
       - no-new-privileges:true
     
     
-    # Health check
+    # Health check (simplified for NAS)
     healthcheck:
-      test: ["CMD", "python", "/app/docker/healthcheck.py"]
-      interval: 30s
-      timeout: 15s
-      retries: 3
-      start_period: 90s
+      test: ["CMD", "python", "/app/docker/healthcheck_simple.py"]
+      interval: 60s  # Increased interval
+      timeout: 30s   # Increased timeout
+      retries: 5     # More retries
+      start_period: 120s  # Longer startup period
     
     # Logging configuration
     logging:
@@ -107,7 +107,7 @@ services:
       context: .
       dockerfile: Dockerfile.web
     container_name: av-scraper-web
-    restart: unless-stopped
+    restart: always  # Always restart on NAS
     # 端口映射
     ports:
       - "8899:8899"

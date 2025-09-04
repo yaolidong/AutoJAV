@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # Selenium Grid - 使用host网络模式避免网络问题
+  selenium-grid:
+    image: seleniarm/standalone-chromium:latest
+    container_name: selenium-grid-standalone
+    restart: always
+    network_mode: host
+    environment:
+      - SE_NODE_SESSION_TIMEOUT=600
+    shm_size: '2g'
+
+  # 主刮削服务
+  av-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: av-metadata-scraper:latest
+    container_name: av-metadata-scraper
+    restart: always
+    network_mode: host
+    
+    volumes:
+      - ./source:/app/source:ro
+      - ./target:/app/target
+      - ./config:/app/config
+      - ./logs:/app/logs
+    
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - API_HOST=0.0.0.0
+      - API_PORT=5555
+      - SELENIUM_HUB_URL=http://localhost:4444/wd/hub
+      - MEMORY_LIMIT=800M
+      
+    # NAS优化的资源限制
+    deploy:
+      resources:
+        limits:
+          memory: 800M
+        reservations:
+          memory: 256M
+    
+    # 简化的健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 120s
+    
+    # 使用NAS优化的启动脚本
+    entrypoint: ["/bin/bash", "/app/docker/startup_with_api_nas.sh", "python", "src/api_server.py"]
+    
+    # 日志限制
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    
+    depends_on:
+      - selenium-grid
+
+  # Web界面
+  av-scraper-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: av-scraper-web:latest
+    container_name: av-scraper-web
+    restart: always
+    
+    ports:
+      - "8899:8899"
+    
+    volumes:
+      - ./source:/app/source:ro
+      - ./target:/app/target:ro
+      - ./config:/app/config
+      - ./logs:/app/logs:ro
+      - ./web:/app/web:ro
+      - ./web_app.py:/app/web_app.py:ro
+    
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+      - API_HOST=localhost
+      - API_PORT=5555
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8899
+    
+    # NAS优化的资源限制
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+        reservations:
+          memory: 128M
+    
+    # 简化的健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8899/"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    
+    # 日志限制
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    
+    depends_on:
+      - av-scraper
