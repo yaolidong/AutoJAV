@@ -3,11 +3,8 @@ services:
     image: seleniarm/standalone-chromium:latest
     container_name: selenium-grid-standalone
     restart: unless-stopped
-    # 映射端口，避免与OrbStack冲突
-    ports:
-      - "4445:4444"
-      - "7900:7900"
-      - "5900:5900"
+    # 使用host网络模式
+    network_mode: host
     # 环境变量，设置会话超时时间为600秒（10分钟）
     environment:
       - SE_NODE_SESSION_TIMEOUT=600
@@ -74,15 +71,15 @@ services:
       - CREATE_THUMBNAILS=${CREATE_THUMBNAILS:-false}
     
     
-    # Resource limits
+    # Resource limits (CPU limits removed for NAS compatibility)
     deploy:
       resources:
         limits:
           memory: ${MEMORY_LIMIT:-2G}
-          cpus: '${CPU_LIMIT:-2.0}'
+          # cpus removed - not supported on some NAS kernels
         reservations:
           memory: 512M
-          cpus: '0.5'
+          # cpus removed - not supported on some NAS kernels
     
     # Security options
     security_opt:
