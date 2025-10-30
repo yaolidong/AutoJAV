@@ -111,6 +111,11 @@ class ConfigManager:
                     'password': ''
                 }
             },
+            'scrapers': {
+                'javdb': {
+                    'base_url': os.getenv('JAVDB_BASE_URL', 'https://javdb563.com')
+                }
+            },
             'scraping': {
                 'priority': ['javdb', 'javlibrary'],
                 'max_concurrent_files': 3,
@@ -149,7 +154,8 @@ class ConfigManager:
             'LOG_LEVEL': ['logging', 'level'],
             'HEADLESS_BROWSER': ['browser', 'headless'],
             'DOWNLOAD_IMAGES': ['organization', 'download_images'],
-            'SAVE_METADATA': ['organization', 'save_metadata']
+            'SAVE_METADATA': ['organization', 'save_metadata'],
+            'JAVDB_BASE_URL': ['scrapers', 'javdb', 'base_url']
         }
         
         for env_var, config_path in env_mappings.items():

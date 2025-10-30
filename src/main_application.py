@@ -603,6 +603,8 @@ class AVMetadataScraper:
                 image_types.append(ImageType.COVER)
             if downloader_config.get('download_poster', True):
                 image_types.append(ImageType.POSTER)
+            if downloader_config.get('download_thumbnail', False):
+                image_types.append(ImageType.THUMBNAIL)
             if downloader_config.get('download_screenshots', False):
                 image_types.append(ImageType.SCREENSHOT)
             
@@ -763,6 +765,8 @@ class AVMetadataScraper:
             # Clean up components
             if hasattr(self.metadata_scraper, 'cleanup'):
                 await self.metadata_scraper.cleanup()
+            if hasattr(self.image_downloader, 'close') and asyncio.iscoroutinefunction(self.image_downloader.close):
+                await self.image_downloader.close()
             
             self.is_running = False
             self.logger.info("Cleanup completed")

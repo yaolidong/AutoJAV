@@ -77,19 +77,14 @@ class JavLibraryScraper(BaseScraper):
         
         try:
             self.logger.debug("Checking JavLibrary availability...")
-            
-            async with self.http_client as client:
-                # Try to access the main page
-                async with await client.get(self.BASE_URL) as response:
-                    success = response.status == 200
-                    
-                    # Update cache
-                    self._availability_cache = success
-                    self._cache_timestamp = datetime.now()
-                    
-                    self.logger.debug(f"JavLibrary availability: {success}")
-                    return success
-                    
+            response = await self.http_client.get(self.BASE_URL)
+            async with response:
+                success = response.status == 200
+                self._availability_cache = success
+                self._cache_timestamp = datetime.now()
+                self.logger.debug(f"JavLibrary availability: {success}")
+                return success
+                
         except Exception as e:
             self.logger.error(f"Error checking JavLibrary availability: {e}")
             self._availability_cache = False
@@ -162,29 +157,24 @@ class JavLibraryScraper(BaseScraper):
             
             self.logger.debug(f"Searching for code: {search_code}")
             
-            async with self.http_client as client:
-                # Make search request
-                async with await client.get(self.SEARCH_URL, params=search_params) as response:
-                    if response.status != 200:
-                        self.logger.error(f"Search request failed: {response.status}")
-                        return None
-                    
-                    content = await response.text()
-                    soup = BeautifulSoup(content, 'html.parser')
-                    
-                    # Check if we got redirected to a movie page (direct match)
-                    if 'vl_movie.php' in str(response.url):
-                        return str(response.url)
-                    
-                    # Parse search results page
-                    movie_url = self._parse_search_results(soup, code)
-                    
-                    if movie_url:
-                        # Make sure it's a full URL
-                        if not movie_url.startswith('http'):
-                            movie_url = urljoin(self.BASE_URL, movie_url)
-                    
-                    return movie_url
+            response = await self.http_client.get(self.SEARCH_URL, params=search_params)
+            async with response:
+                if response.status != 200:
+                    self.logger.error(f"Search request failed: {response.status}")
+                    return None
+
+                content = await response.text()
+                soup = BeautifulSoup(content, 'html.parser')
+
+                if 'vl_movie.php' in str(response.url):
+                    return str(response.url)
+
+                movie_url = self._parse_search_results(soup, code)
+
+                if movie_url and not movie_url.startswith('http'):
+                    movie_url = urljoin(self.BASE_URL, movie_url)
+
+                return movie_url
                     
         except Exception as e:
             self.logger.error(f"Error searching by code {code}: {e}")
@@ -330,49 +320,33 @@ class JavLibraryScraper(BaseScraper):
         try:
             self.logger.debug(f"Extracting metadata from: {movie_url}")
             
-            async with self.http_client as client:
-                async with await client.get(movie_url) as response:
-                    if response.status != 200:
-                        self.logger.error(f"Failed to fetch movie page: {response.status}")
-                        return None
-                    
-                    content = await response.text()
-                    soup = BeautifulSoup(content, 'html.parser')
-                    
-                    # Extract basic information
-                    title = self._extract_title(soup)
-                    actresses = self._extract_actresses(soup)
-                    release_date = self._extract_release_date(soup)
-                    duration = self._extract_duration(soup)
-                    studio = self._extract_studio(soup)
-                    series = self._extract_series(soup)
-                    genres = self._extract_genres(soup)
-                    description = self._extract_description(soup)
-                    rating = self._extract_rating(soup)
-                    
-                    # Extract images
-                    cover_url = self._extract_cover_image(soup)
-                    screenshots = self._extract_screenshots(soup)
-                    
-                    # Create metadata object
-                    metadata = MovieMetadata(
-                        code=code,
-                        title=title or f"Unknown Title ({code})",
-                        actresses=actresses,
-                        release_date=release_date,
-                        duration=duration,
-                        studio=studio,
-                        series=series,
-                        genres=genres,
-                        cover_url=cover_url,
-                        poster_url=cover_url,  # JavLibrary typically uses same image
-                        screenshots=screenshots,
-                        description=description,
-                        rating=rating,
-                        source_url=movie_url
-                    )
-                    
-                    return metadata
+            response = await self.http_client.get(movie_url)
+            async with response:
+                if response.status != 200:
+                    self.logger.error(f"Failed to fetch movie page: {response.status}")
+                    return None
+
+                content = await response.text()
+                soup = BeautifulSoup(content, 'html.parser')
+
+                metadata = MovieMetadata(
+                    code=code,
+                    title=self._extract_title(soup) or f"Unknown Title ({code})",
+                    actresses=self._extract_actresses(soup),
+                    release_date=self._extract_release_date(soup),
+                    duration=self._extract_duration(soup),
+                    studio=self._extract_studio(soup),
+                    series=self._extract_series(soup),
+                    genres=self._extract_genres(soup),
+                    cover_url=self._extract_cover_image(soup),
+                    poster_url=self._extract_cover_image(soup),
+                    screenshots=self._extract_screenshots(soup),
+                    description=self._extract_description(soup),
+                    rating=self._extract_rating(soup),
+                    source_url=movie_url
+                )
+
+                return metadata
                     
         except Exception as e:
             self.logger.error(f"Error extracting metadata from {movie_url}: {e}")

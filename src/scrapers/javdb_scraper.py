@@ -4,8 +4,9 @@ import re
 import logging
 import asyncio
 from typing import Optional, List, Dict, Any
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin, quote, urlparse
 from datetime import datetime, date
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
@@ -14,22 +15,21 @@ from .base_scraper import BaseScraper
 from ..models.movie_metadata import MovieMetadata
 from ..utils.webdriver_manager import WebDriverManager
 from ..utils.login_manager import LoginManager
-from ..utils.javdb_login import JavDBLoginManager
+from ..utils.javdb_login import JavDBCookieManager
 
 
 class JavDBScraper(BaseScraper):
     """Scraper for JavDB website."""
-    
-    BASE_URL = "https://javdb.com"
-    SEARCH_URL = f"{BASE_URL}/search"
-    LOGIN_URL = f"{BASE_URL}/login"
+
+    DEFAULT_BASE_URL = "https://javdb563.com"
     
     def __init__(
         self,
         driver_manager: WebDriverManager,
         login_manager: Optional[LoginManager] = None,
         use_login: bool = True,
-        config_dir: str = "/app/config"
+        config_dir: str = "/app/config",
+        base_url: Optional[str] = None
     ):
         """
         Initialize JavDB scraper.
@@ -46,8 +46,18 @@ class JavDBScraper(BaseScraper):
         self.use_login = use_login
         self.logger = logging.getLogger(__name__)
         
-        # Initialize JavDB login manager for cookie handling
-        self.javdb_login_manager = JavDBLoginManager(config_dir=config_dir)
+        normalized_base_url = base_url or self.DEFAULT_BASE_URL
+        parsed = urlparse(normalized_base_url)
+        if not parsed.scheme:
+            normalized_base_url = f"https://{normalized_base_url.lstrip('/')}"
+            parsed = urlparse(normalized_base_url)
+        self.base_url = normalized_base_url.rstrip('/')
+        self.base_domain = parsed.hostname or "javdb.com"
+        self.search_url = f"{self.base_url}/search"
+        self.login_url = f"{self.base_url}/login"
+        
+        # Manual cookie manager: user pastes cookies via CLI utility
+        self.cookie_manager = JavDBCookieManager(config_dir=Path(config_dir))
         
         # Cache for availability check
         self._availability_cache = None
@@ -74,9 +84,9 @@ class JavDBScraper(BaseScraper):
         try:
             self.logger.debug("Checking JavDB availability...")
             # A simple check: can we get the homepage?
-            success = self.driver_manager.get_page(self.BASE_URL, wait_for_element="head")
+            success = self.driver_manager.get_page(self.base_url, wait_for_element="head")
             if not success:
-                self.logger.warning(f"Failed to load JavDB base URL: {self.BASE_URL}")
+                self.logger.warning(f"Failed to load JavDB base URL: {self.base_url}")
                 self._availability_cache = False
                 self._cache_timestamp = datetime.now()
                 return False
@@ -132,8 +142,30 @@ class JavDBScraper(BaseScraper):
                 driver = self.driver_manager.start_driver()
 
             # Just navigate and wait, like the debug script.
-            self.logger.info(f"Navigating to {self.BASE_URL} to establish a stable session.")
-            self.driver_manager.get_page(self.BASE_URL)
+            self.logger.info(f"Navigating to {self.base_url} to establish a stable session.")
+            self.driver_manager.get_page(self.base_url)
+
+            # Apply manually provided cookies once
+            if not self._cookies_applied:
+                try:
+                    cookies = self.cookie_manager.load_cookies()
+                    for name, value in cookies.items():
+                        try:
+                            driver.add_cookie({
+                                "name": name,
+                                "value": value,
+                                "domain": self.base_domain,
+                                "path": "/",
+                            })
+                        except Exception as cookie_exc:  # noqa: BLE001
+                            self.logger.debug("Failed to add cookie %s: %s", name, cookie_exc)
+                    self._cookies_applied = True
+                    self.logger.info("Applied %d manual JavDB cookies", len(cookies))
+                    driver.get(self.base_url)
+                except FileNotFoundError:
+                    self.logger.warning("未找到手动输入的 JavDB Cookie 文件，访问可能受限")
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.warning("应用 JavDB Cookie 失败: %s", exc)
 
             self.logger.info("Waiting 15 seconds for any Cloudflare checks to complete...")
             await asyncio.sleep(15)
@@ -228,7 +260,7 @@ class JavDBScraper(BaseScraper):
         try:
             # Construct search URL
             search_query = quote(code)
-            search_url = f"{self.SEARCH_URL}?q={search_query}&f=all"
+            search_url = f"{self.search_url}?q={search_query}&f=all"
             
             self.logger.debug(f"Searching URL: {search_url}")
             
@@ -312,7 +344,7 @@ class JavDBScraper(BaseScraper):
             if not link_elem or not link_elem.get('href'):
                 return None
             
-            url = urljoin(self.BASE_URL, link_elem['href'])
+            url = urljoin(self.base_url, link_elem['href'])
             
             # Extract title
             title_elem = item.find('div', class_='video-title') or item.find('strong')
@@ -326,7 +358,7 @@ class JavDBScraper(BaseScraper):
             img_elem = item.find('img')
             thumbnail = img_elem.get('src') or img_elem.get('data-src') if img_elem else ""
             if thumbnail and not thumbnail.startswith('http'):
-                thumbnail = urljoin(self.BASE_URL, thumbnail)
+                thumbnail = urljoin(self.base_url, thumbnail)
             
             # Extract additional info
             meta_elem = item.find('div', class_='meta')
@@ -447,8 +479,10 @@ class JavDBScraper(BaseScraper):
                 screenshots=screenshots,
                 description=description,
                 rating=rating,
-                source_url=movie_url
+                source_urls={'JavDB': movie_url}
             )
+
+            metadata.add_source('JavDB', movie_url)
             
             return metadata
             
@@ -687,7 +721,7 @@ class JavDBScraper(BaseScraper):
             if elem:
                 src = elem.get('src') or elem.get('data-src')
                 if src:
-                    return urljoin(self.BASE_URL, src) if not src.startswith('http') else src
+                    return urljoin(self.base_url, src) if not src.startswith('http') else src
         
         return None
     
@@ -712,7 +746,7 @@ class JavDBScraper(BaseScraper):
             for elem in elements:
                 src = elem.get('src') or elem.get('data-src')
                 if src:
-                    full_url = urljoin(self.BASE_URL, src) if not src.startswith('http') else src
+                    full_url = urljoin(self.base_url, src) if not src.startswith('http') else src
                     if full_url not in screenshots:
                         screenshots.append(full_url)
         

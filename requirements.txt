@@ -1,8 +1,8 @@
 # Core dependencies
-aiohttp==3.9.1
+aiohttp==3.13.2
 aiofiles==23.2.1
 beautifulsoup4==4.12.2
-lxml==5.2.0
+lxml==6.0.2
 
 # Web automation
 selenium==4.16.0
@@ -15,9 +15,6 @@ requests==2.31.0
 # Configuration and data
 PyYAML==6.0.1
 python-dotenv==1.0.0
-
-# Async support
-asyncio==3.4.3
 
 # Logging and utilities
 colorlog==6.8.0

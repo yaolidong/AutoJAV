@@ -2,12 +2,13 @@
 
 import asyncio
 import logging
-from typing import List, Optional, Dict, Any, Set
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import suppress
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 
 from .base_scraper import BaseScraper
 from ..models.movie_metadata import MovieMetadata
+from ..models.scrape_result import ScrapeResult
 
 
 class MetadataScraper:
@@ -45,8 +46,8 @@ class MetadataScraper:
         
         self.logger = logging.getLogger(__name__)
         
-        # Thread pool for concurrent processing
-        self.executor = ThreadPoolExecutor(max_workers=max_concurrent_requests)
+        # Concurrency control for async scraping
+        self._scrape_semaphore = asyncio.Semaphore(max_concurrent_requests)
         
         # Cache for successful results
         self._metadata_cache: Dict[str, Dict[str, Any]] = {}
@@ -59,10 +60,17 @@ class MetadataScraper:
         self.stats = {
             'total_requests': 0,
             'successful_requests': 0,
+            'partial_requests': 0,
             'failed_requests': 0,
             'cache_hits': 0,
-            'scraper_usage': {scraper.name: 0 for scraper in scrapers}
+            'scraper_usage': {scraper.name: 0 for scraper in scrapers},
+            'scraper_failures': {scraper.name: 0 for scraper in scrapers},
+            'scraper_latency_ms': {scraper.name: [] for scraper in scrapers}
         }
+
+        # Early exit threshold to stop once a high quality result is obtained
+        self._early_exit_score = 5.0
+        self._minimum_useful_score = 1.5
         
         self.logger.info(f"Initialized MetadataScraper with {len(scrapers)} scrapers")
     
@@ -96,37 +104,71 @@ class MetadataScraper:
             self.stats['failed_requests'] += 1
             return None
         
-        # Try scrapers in priority order
-        for scraper in available_scrapers:
-            try:
-                self.logger.debug(f"Trying scraper: {scraper.name}")
-                
-                metadata = await self._scrape_with_timeout(scraper, code)
-                
-                if metadata:
-                    self.logger.info(f"Successfully scraped metadata for {code} using {scraper.name}")
-                    
-                    # Cache the result
-                    self._cache_result(code, metadata)
-                    
-                    # Update statistics
-                    self.stats['successful_requests'] += 1
-                    self.stats['scraper_usage'][scraper.name] += 1
-                    
-                    return metadata
+        tasks = [asyncio.create_task(self._execute_scraper(scraper, code)) for scraper in available_scrapers]
+        results: List[ScrapeResult] = []
+        completed: List[asyncio.Task] = []
+        early_exit_triggered = False
+
+        try:
+            for task in asyncio.as_completed(tasks, timeout=self.timeout_seconds):
+                result = await task
+                completed.append(task)  # type: ignore[arg-type]
+
+                if isinstance(result, ScrapeResult):
+                    results.append(result)
+                    if result.has_metadata:
+                        self.stats['scraper_usage'][result.source] += 1
+                        if result.latency:
+                            self._record_latency(result.source, result.latency)
+                        if result.score >= self._early_exit_score:
+                            self.logger.debug(
+                                "Early exit triggered by %s with score %.2f",
+                                result.source,
+                                result.score,
+                            )
+                            early_exit_triggered = True
+                            break
+                    else:
+                        self.stats['scraper_failures'][result.source] += 1
+                        if result.error:
+                            self._mark_scraper_unavailable(result.source, result.error)
                 else:
-                    self.logger.debug(f"No metadata found for {code} using {scraper.name}")
-                    
-            except Exception as e:
-                self.logger.warning(f"Error using scraper {scraper.name} for {code}: {e}")
-                # Mark scraper as temporarily unavailable
-                self._mark_scraper_unavailable(scraper.name, str(e))
-                continue
-        
-        # All scrapers failed
-        self.logger.warning(f"Failed to scrape metadata for {code} using all available scrapers")
-        self.stats['failed_requests'] += 1
-        return None
+                    self.logger.debug("Received unexpected result type from scraper task: %s", type(result))
+        except asyncio.TimeoutError:
+            self.logger.warning(f"Timed out waiting for scrapers when processing {code}")
+        finally:
+            for task in tasks:
+                if task not in completed and not task.done():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                elif task not in completed and task.done():
+                    with suppress(Exception):
+                        maybe_result = task.result()
+                        if isinstance(maybe_result, ScrapeResult):
+                            results.append(maybe_result)
+
+        successful_results = [r for r in results if r.has_metadata and r.score >= self._minimum_useful_score]
+
+        if not successful_results:
+            self.logger.warning(f"Failed to scrape metadata for {code} using available scrapers")
+            self.stats['failed_requests'] += 1
+            return None
+
+        merged_metadata = self._merge_results(successful_results)
+
+        if not merged_metadata:
+            self.stats['failed_requests'] += 1
+            return None
+
+        self._cache_result(code, merged_metadata)
+
+        if early_exit_triggered or len(successful_results) == len(available_scrapers):
+            self.stats['successful_requests'] += 1
+        else:
+            self.stats['partial_requests'] += 1
+
+        return merged_metadata
     
     async def scrape_multiple(
         self,
@@ -174,42 +216,149 @@ class MetadataScraper:
         
         return results
     
-    async def _scrape_with_timeout(self, scraper: BaseScraper, code: str) -> Optional[MovieMetadata]:
-        """
-        Scrape metadata with timeout and retry logic.
-        
-        Args:
-            scraper: Scraper instance to use
-            code: Movie code to search for
-            
-        Returns:
-            MovieMetadata if successful, None otherwise
-        """
-        for attempt in range(self.retry_attempts + 1):
-            try:
-                # Use asyncio.wait_for to enforce timeout
-                metadata = await asyncio.wait_for(
-                    scraper.search_movie(code),
-                    timeout=self.timeout_seconds
-                )
-                
-                if metadata:
-                    return metadata
-                    
-            except asyncio.TimeoutError:
-                self.logger.warning(f"Timeout scraping {code} with {scraper.name} (attempt {attempt + 1})")
+    async def _execute_scraper(self, scraper: BaseScraper, code: str) -> ScrapeResult:
+        """Execute a scraper with retries and scoring."""
+        last_error: Optional[str] = None
+
+        async with self._scrape_semaphore:
+            for attempt in range(self.retry_attempts + 1):
+                start_time = datetime.now()
+                try:
+                    metadata = await asyncio.wait_for(
+                        scraper.search_movie(code),
+                        timeout=self.timeout_seconds
+                    )
+
+                    latency = datetime.now() - start_time
+
+                    if metadata:
+                        metadata.add_source(scraper.name, metadata.source_url)
+                        score = self._score_metadata(metadata)
+                        if score < self._minimum_useful_score:
+                            self.logger.debug(
+                                "Discarding low quality result from %s for %s (score %.2f)",
+                                scraper.name,
+                                code,
+                                score,
+                            )
+                            return ScrapeResult(scraper.name, None, False, 0.0, latency=latency)
+
+                        self.logger.debug(
+                            "%s completed in %.2fs with score %.2f",
+                            scraper.name,
+                            latency.total_seconds(),
+                            score,
+                        )
+
+                        return ScrapeResult(
+                            source=scraper.name,
+                            metadata=metadata,
+                            success=True,
+                            score=score,
+                            latency=latency,
+                        )
+
+                    last_error = "No metadata returned"
+                    break
+
+                except asyncio.TimeoutError:
+                    last_error = "timeout"
+                    self.logger.warning(
+                        "Timeout scraping %s with %s (attempt %d)",
+                        code,
+                        scraper.name,
+                        attempt + 1,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    last_error = str(exc)
+                    self.logger.warning(
+                        "Error scraping %s with %s (attempt %d): %s",
+                        code,
+                        scraper.name,
+                        attempt + 1,
+                        exc,
+                    )
+
                 if attempt < self.retry_attempts:
-                    # Exponential backoff
                     await asyncio.sleep(2 ** attempt)
-                    
-            except Exception as e:
-                self.logger.warning(f"Error scraping {code} with {scraper.name} (attempt {attempt + 1}): {e}")
-                if attempt < self.retry_attempts:
-                    await asyncio.sleep(2 ** attempt)
-                else:
-                    raise
-        
-        return None
+
+        return ScrapeResult(
+            source=scraper.name,
+            metadata=None,
+            success=False,
+            score=0.0,
+            error=last_error,
+        )
+
+    def _score_metadata(self, metadata: MovieMetadata) -> float:
+        """Heuristic completeness score for a metadata payload."""
+        # Inspired by multi-source fusion strategies in JAVSP/MDCx, we
+        # measure how complete the response is rather than trusting a
+        # single source blindly.
+        score = 0.0
+
+        if metadata.title and "Unknown" not in metadata.title:
+            score += 1.0
+        if metadata.description:
+            score += min(len(metadata.description) / 120.0, 1.5)
+        if metadata.actresses:
+            score += min(len(metadata.actresses), 3) * 0.6
+        if metadata.studio:
+            score += 0.5
+        if metadata.label:
+            score += 0.3
+        if metadata.director:
+            score += 0.3
+        if metadata.release_date:
+            score += 0.5
+        if metadata.duration:
+            score += 0.3
+        if metadata.genres:
+            score += min(len(metadata.genres), 5) * 0.2
+        if metadata.cover_url:
+            score += 0.7
+        if metadata.poster_url:
+            score += 0.3
+        if metadata.screenshots:
+            score += min(len(metadata.screenshots), 6) * 0.15
+        if metadata.rating:
+            score += 0.2
+
+        return round(score, 2)
+
+    def _merge_results(self, results: List[ScrapeResult]) -> Optional[MovieMetadata]:
+        """Merge multiple scrape results into a single metadata object."""
+        if not results:
+            return None
+
+        sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
+        base_metadata = sorted_results[0].metadata
+
+        if base_metadata is None:
+            return None
+
+        merged_metadata = base_metadata
+
+        for result in sorted_results[1:]:
+            if result.metadata:
+                merged_metadata = merged_metadata.merge_with(result.metadata)
+
+        # Aggregate source URLs and score breakdown
+        source_scores = {}
+        for result in results:
+            if result.metadata:
+                for source_name, url in result.metadata.source_urls.items():
+                    merged_metadata.add_source(source_name, url)
+            source_scores[result.source] = result.score
+
+        merged_metadata.extra = {**merged_metadata.extra, 'source_scores': source_scores}
+
+        return merged_metadata
+
+    def _record_latency(self, scraper_name: str, latency: timedelta) -> None:
+        """Record latency information for diagnostics."""
+        latency_ms = int(latency.total_seconds() * 1000)
+        self.stats['scraper_latency_ms'][scraper_name].append(latency_ms)
     
     async def _get_available_scrapers(self, preferred_scrapers: Optional[List[str]] = None) -> List[BaseScraper]:
         """
@@ -409,18 +558,28 @@ class MetadataScraper:
         Returns:
             Dictionary with statistics
         """
+        def _avg(values: List[int]) -> Optional[float]:
+            return round(sum(values) / len(values), 2) if values else None
+
         return {
             'total_requests': self.stats['total_requests'],
             'successful_requests': self.stats['successful_requests'],
+            'partial_requests': self.stats['partial_requests'],
             'failed_requests': self.stats['failed_requests'],
             'success_rate': (
-                self.stats['successful_requests'] / max(1, self.stats['total_requests'])
+                (self.stats['successful_requests'] + self.stats['partial_requests']) /
+                max(1, self.stats['total_requests'])
             ) * 100,
             'cache_hits': self.stats['cache_hits'],
             'cache_hit_rate': (
                 self.stats['cache_hits'] / max(1, self.stats['total_requests'])
             ) * 100,
             'scraper_usage': self.stats['scraper_usage'].copy(),
+            'scraper_failures': self.stats['scraper_failures'].copy(),
+            'scraper_latency_avg_ms': {
+                name: _avg(latencies)
+                for name, latencies in self.stats['scraper_latency_ms'].items()
+            },
             'scraper_availability': {
                 name: info.get('available', True)
                 for name, info in self._scraper_availability.items()
@@ -437,9 +596,12 @@ class MetadataScraper:
         self.stats = {
             'total_requests': 0,
             'successful_requests': 0,
+            'partial_requests': 0,
             'failed_requests': 0,
             'cache_hits': 0,
-            'scraper_usage': {scraper.name: 0 for scraper in self.scrapers}
+            'scraper_usage': {scraper.name: 0 for scraper in self.scrapers},
+            'scraper_failures': {scraper.name: 0 for scraper in self.scrapers},
+            'scraper_latency_ms': {scraper.name: [] for scraper in self.scrapers}
         }
         self.logger.info("Statistics reset")
     
@@ -470,11 +632,6 @@ class MetadataScraper:
         
         return health_status
     
-    def __del__(self):
-        """Cleanup resources."""
-        if hasattr(self, 'executor'):
-            self.executor.shutdown(wait=False)
-
     async def cleanup(self):
         """Clean up resources used by all scrapers."""
         self.logger.info("Cleaning up all scraper resources...")

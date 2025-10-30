@@ -79,18 +79,6 @@ RUN mkdir -p /app/logs /app/config /app/source /app/target && \
 # Copy application code
 COPY --chown=appuser:appuser . /app/
 
-# Copy and setup entrypoint scripts
-COPY --chown=appuser:appuser docker/startup.sh /app/entrypoint.sh
-COPY --chown=appuser:appuser docker/startup_with_api.sh /app/entrypoint_api.sh
-RUN chmod +x /app/entrypoint.sh /app/entrypoint_api.sh
-
-# Install gosu for proper user switching
-RUN apt-get update && apt-get install -y gosu && rm -rf /var/lib/apt/lists/*
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
-    CMD python /app/docker/healthcheck.py || exit 1
-
 # Environment variables
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
@@ -101,11 +89,5 @@ ENV PYTHONPATH=/app/src \
     WDM_LOG=false \
     SE_DRIVER_PATH=/usr/bin/chromedriver
 
-# Expose API port
-EXPOSE 5001
-
-# Set entrypoint with API
-ENTRYPOINT ["/app/docker/startup_with_api.sh"]
-
-# Default command (run API server)
-CMD ["python", "src/api_server.py"]
+# Default entrypoint: run scraper pipeline
+ENTRYPOINT ["python", "main.py"]

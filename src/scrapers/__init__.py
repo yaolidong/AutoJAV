@@ -1,15 +1,24 @@
-"""Scrapers package for different metadata sources."""
+"""Scrapers package with lazy exports to keep optional deps optional."""
 
-from .base_scraper import BaseScraper
-from .javdb_scraper import JavDBScraper
-from .javlibrary_scraper import JavLibraryScraper
-from .metadata_scraper import MetadataScraper
-from .scraper_factory import ScraperFactory
+from importlib import import_module
+from typing import Any, Dict, Tuple
 
-__all__ = [
-    'BaseScraper',
-    'JavDBScraper', 
-    'JavLibraryScraper',
-    'MetadataScraper',
-    'ScraperFactory'
-]
+_EXPORT_MAP: Dict[str, Tuple[str, str]] = {
+    "BaseScraper": (".base_scraper", "BaseScraper"),
+    "JavDBScraper": (".javdb_scraper", "JavDBScraper"),
+    "JavLibraryScraper": (".javlibrary_scraper", "JavLibraryScraper"),
+    "MetadataScraper": (".metadata_scraper", "MetadataScraper"),
+    "ScraperFactory": (".scraper_factory", "ScraperFactory"),
+}
+
+__all__ = list(_EXPORT_MAP.keys())
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover
+    if name in _EXPORT_MAP:
+        module_name, attr = _EXPORT_MAP[name]
+        module = import_module(module_name, package=__name__)
+        value = getattr(module, attr)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

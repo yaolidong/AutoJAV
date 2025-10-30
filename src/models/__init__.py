@@ -2,6 +2,7 @@
 
 from .video_file import VideoFile
 from .movie_metadata import MovieMetadata
+from .scrape_result import ScrapeResult
 from .config import Config
 
-__all__ = ['VideoFile', 'MovieMetadata', 'Config']
+__all__ = ['VideoFile', 'MovieMetadata', 'ScrapeResult', 'Config']

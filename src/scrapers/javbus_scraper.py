@@ -180,6 +180,7 @@ class JAVBusScraper(BaseScraper):
             director = info_dict.get('導演', info_dict.get('导演'))
             studio = info_dict.get('製作商', info_dict.get('制作商'))
             series = info_dict.get('系列', info_dict.get('系列'))
+            label = info_dict.get('發行商', info_dict.get('发行商'))
             
             # Extract actresses
             actresses = []
@@ -228,15 +229,19 @@ class JAVBusScraper(BaseScraper):
                 title=title,
                 actresses=actresses if actresses else ["未知女优"],
                 release_date=release_date,
-                studio=studio,
-                director=director,
                 duration=duration,
+                studio=studio,
+                label=label,
+                director=director,
                 series=series,
                 genres=genres,
                 cover_url=cover_url,
-                gallery_urls=gallery_urls,
+                poster_url=cover_url,
+                screenshots=gallery_urls,
                 source_urls={'JAVBus': url}
             )
+
+            metadata.add_source('JAVBus', url)
             
             self.logger.info(f"Successfully scraped metadata from JAVBus for {code}")
             return metadata

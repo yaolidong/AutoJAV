@@ -1,21 +1,18 @@
-"""WebDriver manager for browser automation."""
+"""WebDriver manager for local Chrome automation."""
 
-import os
 import logging
-import asyncio
-from typing import Optional, Dict, Any, List
+import os
 from pathlib import Path
+from typing import Any, List, Optional
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.remote.webelement import WebElement
-from selenium.common.exceptions import (
-    WebDriverException, TimeoutException, NoSuchElementException
-)
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 
@@ -138,44 +135,21 @@ class WebDriverManager:
         
         try:
             options = self._get_chrome_options()
-            
-            # Check if we should use Selenium Grid (in Docker environment)
-            selenium_grid_url = os.environ.get('SELENIUM_HUB_URL', os.environ.get('SELENIUM_GRID_URL', 'http://selenium-grid:4444/wd/hub'))
-            
-            # Try to connect to Selenium Grid first
-            try:
-                self.logger.info(f"Connecting to Selenium Grid at {selenium_grid_url}...")
-                self._driver = webdriver.Remote(
-                    command_executor=selenium_grid_url,
-                    options=options
-                )
-                self.logger.info("Successfully connected to Selenium Grid")
-            except Exception as grid_error:
-                self.logger.warning(f"Failed to connect to Selenium Grid: {grid_error}")
-                self.logger.info("Falling back to local Chrome driver...")
-                
-                # Fallback to local Chrome driver
-                # Get ChromeDriver path
-                if os.path.exists('/usr/local/bin/chromedriver'):
-                    # Use system chromedriver (Docker)
-                    driver_path = '/usr/local/bin/chromedriver'
-                else:
-                    # Use webdriver-manager to download
-                    driver_path = ChromeDriverManager().install()
-                
-                self._service = Service(driver_path)
-                self._driver = webdriver.Chrome(service=self._service, options=options)
-            
-            # Set timeouts
+            driver_path = os.environ.get("CHROMEDRIVER_PATH")
+            if driver_path and Path(driver_path).exists():
+                self.logger.info("Using system chromedriver at %s", driver_path)
+            else:
+                self.logger.info("Downloading chromedriver via webdriver-manager")
+                driver_path = ChromeDriverManager().install()
+            self._service = Service(driver_path)
+            self._driver = webdriver.Chrome(service=self._service, options=options)
             self._driver.implicitly_wait(self.timeout)
             self._driver.set_page_load_timeout(self.timeout)
-            
             self.logger.info("WebDriver started successfully")
             return self._driver
-            
-        except Exception as e:
-            self.logger.error(f"Failed to start WebDriver: {e}")
-            raise WebDriverException(f"Failed to start WebDriver: {e}")
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Failed to start WebDriver: %s", exc)
+            raise WebDriverException(f"Failed to start WebDriver: {exc}")
     
     def quit_driver(self):
         """Quit the WebDriver and clean up resources."""

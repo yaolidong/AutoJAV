@@ -160,6 +160,14 @@ class ImageDownloader:
             download_tasks.append(
                 self._download_single_image(metadata.poster_url, poster_path, ImageType.POSTER)
             )
+
+        # Download thumbnail image if present
+        if ImageType.THUMBNAIL in image_types and metadata.thumbnail_url:
+            thumb_filename = self._generate_filename(metadata.code, ImageType.THUMBNAIL, metadata.thumbnail_url)
+            thumb_path = target_directory / thumb_filename
+            download_tasks.append(
+                self._download_single_image(metadata.thumbnail_url, thumb_path, ImageType.THUMBNAIL)
+            )
         
         # Download screenshots
         if ImageType.SCREENSHOT in image_types and metadata.screenshots:
@@ -279,34 +287,30 @@ class ImageDownloader:
             Image data bytes or None if failed
         """
         try:
-            async with self.http_client as client:
-                async with await client.get(url) as response:
-                    if response.status != 200:
-                        self.logger.warning(f"HTTP {response.status} for {url}")
-                        return None
-                    
-                    # Check content type
-                    content_type = response.headers.get('content-type', '').lower()
-                    if not any(img_type in content_type for img_type in ['image/', 'jpeg', 'png', 'webp']):
-                        self.logger.warning(f"Invalid content type {content_type} for {url}")
-                        return None
-                    
-                    # Check content length
-                    content_length = response.headers.get('content-length')
-                    if content_length and int(content_length) > self.max_file_size_bytes:
-                        self.logger.warning(f"Image too large: {content_length} bytes for {url}")
-                        return None
-                    
-                    # Read image data
-                    image_data = await response.read()
-                    
-                    # Check actual size
-                    if len(image_data) > self.max_file_size_bytes:
-                        self.logger.warning(f"Image too large: {len(image_data)} bytes for {url}")
-                        return None
-                    
-                    return image_data
-                    
+            response = await self.http_client.get(url)
+            async with response:
+                if response.status != 200:
+                    self.logger.warning(f"HTTP {response.status} for {url}")
+                    return None
+
+                content_type = response.headers.get('content-type', '').lower()
+                if not any(img_type in content_type for img_type in ['image/', 'jpeg', 'png', 'webp']):
+                    self.logger.warning(f"Invalid content type {content_type} for {url}")
+                    return None
+
+                content_length = response.headers.get('content-length')
+                if content_length and int(content_length) > self.max_file_size_bytes:
+                    self.logger.warning(f"Image too large: {content_length} bytes for {url}")
+                    return None
+
+                image_data = await response.read()
+
+                if len(image_data) > self.max_file_size_bytes:
+                    self.logger.warning(f"Image too large: {len(image_data)} bytes for {url}")
+                    return None
+
+                return image_data
+                
         except Exception as e:
             self.logger.error(f"Error fetching image data from {url}: {e}")
             return None
@@ -611,6 +615,13 @@ class ImageDownloader:
             self.stats[key] = 0
         
         self.logger.info("Statistics reset")
+
+    async def close(self) -> None:
+        """Close underlying HTTP resources."""
+        try:
+            await self.http_client.close()
+        except Exception as error:  # noqa: BLE001
+            self.logger.debug("Error closing HTTP client: %s", error)
     
     async def verify_image_integrity(self, image_path: Path) -> bool:
         """

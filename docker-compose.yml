@@ -21,10 +21,6 @@ services:
     depends_on:
       - selenium-grid
     
-    # 端口映射
-    ports:
-      - "5555:5555"
-    
     # Volumes
     volumes:
       # Source directory (read-write for moving files)
@@ -70,7 +66,6 @@ services:
       - RESIZE_IMAGES=${RESIZE_IMAGES:-false}
       - CREATE_THUMBNAILS=${CREATE_THUMBNAILS:-false}
     
-    
     # Resource limits (optimized for NAS)
     deploy:
       resources:
@@ -85,52 +80,12 @@ services:
     security_opt:
       - no-new-privileges:true
     
-    
-    # Health check (simplified for NAS)
-    healthcheck:
-      test: ["CMD", "python", "/app/docker/healthcheck_simple.py"]
-      interval: 60s  # Increased interval
-      timeout: 30s   # Increased timeout
-      retries: 5     # More retries
-      start_period: 120s  # Longer startup period
-    
     # Logging configuration
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-
-  # Web UI service
-  av-scraper-web:
-    build:
-      context: .
-      dockerfile: Dockerfile.web
-    container_name: av-scraper-web
-    restart: always  # Always restart on NAS
-    # 端口映射
-    ports:
-      - "8899:8899"
-    environment:
-      - FLASK_APP=web_app.py
-      - PYTHONUNBUFFERED=1
-      - CONFIG_FILE=/app/config/config.yaml
-      # Web服务端口
-      - WEB_PORT=${WEB_PORT:-8899}
-      # API服务地址（容器名）
-      - API_HOST=av-scraper
-      - API_PORT=5555
-    volumes:
-      # Configuration directory (includes config.yaml and patterns.json)
-      - ${CONFIG_DIR:-./config}:/app/config
-      # Source directory
-      - ${SOURCE_DIR:-./source}:/app/source
-      # Target directory  
-      - ${TARGET_DIR:-./organized}:/app/target
-      # Logs directory
-      - ${LOGS_DIR:-./logs}:/app/logs
-    depends_on:
-      - av-scraper
 
 # Named volumes
 volumes:

@@ -1,0 +1,15 @@
+{
+  "session_id": "session_20251031_000343",
+  "start_time": "2025-10-31T00:03:43.142807",
+  "last_update": "2025-10-31T00:03:43.142807",
+  "total_files": 3,
+  "processed_files": [],
+  "failed_files": [],
+  "skipped_files": [],
+  "pending_files": [],
+  "session_metadata": {
+    "source_directories": "",
+    "target_directory": "",
+    "duplicate_detection_enabled": false
+  }
+}

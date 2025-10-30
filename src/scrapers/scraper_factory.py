@@ -1,6 +1,7 @@
 """Factory for creating and configuring scrapers."""
 
 import logging
+import os
 from typing import List, Optional, Dict, Any
 
 from .base_scraper import BaseScraper
@@ -33,7 +34,8 @@ class ScraperFactory:
                 'javdb': {
                     'enabled': True,
                     'use_login': True,
-                    'priority': 1
+                    'priority': 1,
+                    'base_url': os.getenv('JAVDB_BASE_URL', 'https://javdb563.com')
                 },
                 'javlibrary': {
                     'enabled': True,
@@ -249,7 +251,8 @@ class ScraperFactory:
                 driver_manager=webdriver_manager,
                 login_manager=login_manager,
                 use_login=scraper_config.get('use_login', True),
-                config_dir=config_dir
+                config_dir=config_dir,
+                base_url=scraper_config.get('base_url')
             )
             
             return javdb_scraper

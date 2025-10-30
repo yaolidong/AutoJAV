@@ -2,28 +2,20 @@
 javdb:
   username: ""
   password: ""
-  cookies_file: "/app/config/javdb_cookies.json"
+  cookies_file: "config/javdb_cookies.json"
   login_retry_attempts: 3
   login_retry_delay: 60
 
 # Directory Configuration
 directories:
-  source: "/app/source"
-  target: "/app/target"
-  config: "/app/config"
-  logs: "/app/logs"
+  source: "./source"
+  target: "./target"
+  config: "./config"
+  logs: "./logs"
 
 # Network Configuration
 network:
   proxy_url: "http://192.168.3.2:6152"
-
-# Selenium Configuration
-selenium:
-  grid_url: "http://localhost:4444"
-  vnc_url: "http://localhost:7900"
-  browser: "chrome"
-  headless: false
-  timeout: 30
 
 # Processing Configuration
 processing:
@@ -46,3 +38,8 @@ web:
   host: "0.0.0.0"
   port: 8899
   debug: true
+
+# Scraper configuration
+scrapers:
+  javdb:
+    base_url: "https://javdb563.com"

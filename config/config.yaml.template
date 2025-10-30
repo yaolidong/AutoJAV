@@ -17,7 +17,7 @@ max_concurrent_files: 3  # Maximum number of files to process simultaneously
 retry_attempts: 3  # Number of retry attempts for failed operations
 
 # File Naming Configuration
-# Available placeholders: {actress}, {code}, {title}, {ext}, {studio}, {release_date}
+# Available placeholders: {actress}, {actresses}, {code}, {title}, {title_en}, {alias}, {studio}, {label}, {director}, {series}, {primary_genre}, {year}, {month}, {day}, {ext}
 naming_pattern: '{actress}/{code}/{code}.{ext}'
 
 # Browser Configuration
