@@ -2,7 +2,7 @@
 # Multi-stage build for optimized production image
 
 # Build stage
-FROM python:3.11-slim as builder
+from python:3.11-slim as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Production stage
-FROM python:3.11-slim
+from python:3.11-slim
 
 # Install system dependencies for Chrome and application
 RUN apt-get update && apt-get install -y \
