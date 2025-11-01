@@ -1,93 +1,90 @@
 services:
   selenium-grid:
-    image: seleniarm/standalone-chromium:latest
-    container_name: selenium-grid-standalone
-    restart: always  # Always restart on NAS
-    # 使用host网络模式
-    network_mode: host
-    # 环境变量，设置会话超时时间为600秒（10分钟）
-    environment:
-      - SE_NODE_SESSION_TIMEOUT=600
-    # Selenium官方推荐的配置，防止浏览器因内存不足而崩溃
-    shm_size: '2g'
-
-  av-scraper:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: av-metadata-scraper
-    restart: always  # Always restart on NAS
-    # 确保在selenium-grid启动之后再启动本项目
+      target: selenium_grid
+    image: autojav-selenium
+    container_name: selenium-grid
+    restart: unless-stopped
+    shm_size: '2g'
+    environment:
+      - SE_NODE_SESSION_TIMEOUT=600
+    ports:
+      - "4444:4444"
+      - "7900:7900"
+    networks:
+      - av-network
+
+  av-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: autojav-runtime
+    container_name: av-metadata-api
+    restart: unless-stopped
     depends_on:
       - selenium-grid
-    
-    # Volumes
+    command: ["python", "-m", "src.api_server"]
+    ports:
+      - "${API_PORT:-5555}:5555"
     volumes:
-      # Source directory (read-write for moving files)
       - ${SOURCE_DIR:-./source}:/app/source
-      # Target directory (read-write)
       - ${TARGET_DIR:-./organized}:/app/target
-      # Configuration directory (includes config.yaml and patterns.json)
       - ${CONFIG_DIR:-./config}:/app/config
-      # Logs directory
       - ${LOGS_DIR:-./logs}:/app/logs
-      # Chrome data directory for session persistence
       - chrome_data:/app/.chrome-data
-    
-    # Environment variables
     environment:
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - CONFIG_FILE=/app/config/config.yaml
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
-      - DISPLAY=:99
-      - CHROME_BIN=/usr/bin/google-chrome
-      - CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - TZ=${TZ:-Asia/Shanghai}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      # Selenium Grid地址
       - SELENIUM_HUB_URL=http://selenium-grid:4444/wd/hub
-      # Optional JavDB credentials
-      - JAVDB_USERNAME=${JAVDB_USERNAME:-}
-      - JAVDB_PASSWORD=${JAVDB_PASSWORD:-}
-      # Processing configuration
       - MAX_CONCURRENT_FILES=${MAX_CONCURRENT_FILES:-2}
       - MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS:-2}
       - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-2}
-      # Network configuration
+      - SAFE_MODE=${SAFE_MODE:-false}
+      - DOWNLOAD_IMAGES=${DOWNLOAD_IMAGES:-true}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
-      # Feature flags
-      - DEBUG_MODE=${DEBUG_MODE:-false}
-      - SAFE_MODE=${SAFE_MODE:-false}
-      - CREATE_METADATA_FILES=${CREATE_METADATA_FILES:-true}
-      - DOWNLOAD_IMAGES=${DOWNLOAD_IMAGES:-true}
-      - RESIZE_IMAGES=${RESIZE_IMAGES:-false}
-      - CREATE_THUMBNAILS=${CREATE_THUMBNAILS:-false}
-    
-    # Resource limits (optimized for NAS)
-    deploy:
-      resources:
-        limits:
-          memory: ${MEMORY_LIMIT:-1G}  # Reduced for NAS
-          # cpus removed - not supported on some NAS kernels
-        reservations:
-          memory: 256M  # Reduced for NAS
-          # cpus removed - not supported on some NAS kernels
-    
-    # Security options
-    security_opt:
-      - no-new-privileges:true
-    
-    # Logging configuration
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    networks:
+      - av-network
 
-# Named volumes
+  av-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: autojav-runtime
+    container_name: av-metadata-web
+    restart: unless-stopped
+    depends_on:
+      - av-api
+    command: ["python", "web_app.py"]
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    volumes:
+      - ${SOURCE_DIR:-./source}:/app/source
+      - ${TARGET_DIR:-./organized}:/app/target
+      - ${CONFIG_DIR:-./config}:/app/config
+      - ${LOGS_DIR:-./logs}:/app/logs
+    environment:
+      - API_HOST=av-api
+      - API_PORT=5555
+      - WEB_PORT=8080
+      - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - av-network
+
 volumes:
   chrome_data:
     driver: local
+
+networks:
+  av-network:
+    driver: bridge

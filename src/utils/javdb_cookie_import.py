@@ -6,9 +6,10 @@ JavDB Cookie Import Tool - 导入和验证cookies
 import json
 import logging
 import time
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -21,10 +22,16 @@ logger = logging.getLogger(__name__)
 class JavDBCookieImporter:
     """处理JavDB cookies的导入和验证"""
     
-    def __init__(self, config_dir: str = "/app/config"):
+    def __init__(self, config_dir: str = "/app/config", base_url: str = "https://javdb.com"):
         self.config_dir = Path(config_dir)
         self.cookie_file = self.config_dir / "javdb_cookies.json"
-        self.base_url = "https://javdb.com"
+        self.base_url = base_url or "https://javdb.com"
+
+        parsed = urlparse(self.base_url)
+        domain = parsed.netloc or "javdb.com"
+        if domain and not domain.startswith(".") and not domain.startswith("javdb"):
+            domain = f".{domain}"
+        self.cookie_domain = domain or ".javdb.com"
         
     def import_cookies_from_browser(self, browser_cookies: List[Dict]) -> bool:
         """
@@ -41,7 +48,7 @@ class JavDBCookieImporter:
                 processed_cookie = {
                     "name": cookie.get("name"),
                     "value": cookie.get("value"),
-                    "domain": cookie.get("domain", ".javdb.com"),
+                    "domain": cookie.get("domain", self.cookie_domain),
                     "path": cookie.get("path", "/"),
                     "secure": cookie.get("secure", False),
                     "httpOnly": cookie.get("httpOnly", False)
@@ -137,13 +144,11 @@ class JavDBCookieImporter:
                     clean_cookie["value"] = cookie.get("value")
                     
                     # 可选字段
-                    if "domain" in cookie:
-                        # 确保domain匹配当前网站
-                        domain = cookie["domain"]
-                        if domain.startswith("."):
-                            clean_cookie["domain"] = domain
-                        else:
-                            clean_cookie["domain"] = "." + domain if not domain.startswith("javdb.com") else domain
+                    domain = cookie.get("domain") or self.cookie_domain
+                    if domain and not domain.startswith(".") and not domain.startswith("javdb"):
+                        domain = f".{domain}"
+                    if domain:
+                        clean_cookie["domain"] = domain
                     
                     if "path" in cookie:
                         clean_cookie["path"] = cookie["path"]
@@ -271,9 +276,11 @@ class JavDBCookieImporter:
                 
                 # 修复domain
                 if not cookie.get("domain"):
-                    cookie["domain"] = ".javdb.com"
-                elif not cookie["domain"].startswith(".") and "javdb.com" in cookie["domain"]:
-                    cookie["domain"] = "." + cookie["domain"]
+                    cookie["domain"] = self.cookie_domain
+                else:
+                    domain = cookie["domain"]
+                    if not domain.startswith(".") and "javdb" in domain:
+                        cookie["domain"] = f".{domain}"
                 
                 # 修复path
                 if not cookie.get("path"):

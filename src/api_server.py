@@ -8,7 +8,7 @@ Refactored to be thread-safe by creating scraper instances per request.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from flask import Flask, request, jsonify
@@ -28,6 +28,19 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+# 无效女优名称列表，与文件整理逻辑保持一致
+INVALID_ACTRESS_NAMES = {
+    'censored', 'uncensored', 'western', '暂无', '未知', 'unknown', 'n/a', '-', '---',
+    '有码', '无码', '有碼', '無碼', '素人'
+}
+
+
+def _select_primary_actress(actresses: List[str]) -> Optional[str]:
+    for actress in actresses or []:
+        if actress and actress.strip() and actress not in INVALID_ACTRESS_NAMES:
+            return actress
+    return None
 
 # --- Global components that are safe to share ---
 config_manager = ConfigManager()
@@ -62,7 +75,7 @@ def scrape_metadata_endpoint():
             naming_pattern=organization_config.get('naming_pattern', '{actress}/{code}/{code}.{ext}'),
             conflict_resolution=ConflictResolution(organization_config.get('conflict_resolution', 'rename')),
             create_metadata_files=organization_config.get('create_metadata_files', True),
-            safe_mode=False,
+            safe_mode=organization_config.get('safe_mode', False),
             move_source_files=True
         )
         # --- End of per-request instance creation ---
@@ -101,63 +114,7 @@ def scrape_metadata_endpoint():
         
         metadata = asyncio.run(metadata_scraper.scrape_metadata(code))
 
-        if metadata:
-            logger.info(f"API: Successfully scraped metadata for {code}")
-            
-            if file_path and file_path.exists():
-                # Create VideoFile instance from path
-                file_stat = file_path.stat()
-                video_file = VideoFile(
-                    file_path=str(file_path),
-                    filename=file_path.name,
-                    file_size=file_stat.st_size,
-                    extension=file_path.suffix,
-                    detected_code=code
-                )
-                
-                logger.info(f"Organizing file: {file_path_str}")
-                result = file_organizer.organize_file(video_file, metadata)
-                
-                if result.get('success'):
-                    # Get details from the correct field
-                    details = result.get('details', {})
-                    target_path = details.get('target_path', '')
-                    logger.info(f"Successfully organized file to: {target_path}")
-                    history_manager.record_success(
-                        original_filename=video_file.filename,
-                        original_path=str(video_file.file_path),
-                        file_size=video_file.file_size,
-                        file_extension=video_file.extension,
-                        detected_code=code,
-                        new_filename=Path(target_path).name if target_path else '',
-                        new_path=target_path,
-                        metadata=metadata.to_dict(),
-                        scraper_used=getattr(metadata, 'source', 'Unknown')
-                    )
-                    # Add data field for frontend compatibility
-                    result['data'] = details
-                else:
-                    # Check if it's due to invalid actress
-                    details = result.get('details', {})
-                    if details.get('reason') == 'invalid_actress':
-                        logger.warning(f"File kept in original location due to invalid actress: {video_file.filename}")
-                        error_message = "No valid actress information - file preserved in original location"
-                    else:
-                        error_message = result.get('message', result.get('error', 'Unknown organization error'))
-                    logger.error(f"Failed to organize file: {error_message}")
-                    history_manager.record_failure(
-                        original_filename=video_file.filename,
-                        original_path=str(video_file.file_path),
-                        file_size=video_file.file_size,
-                        file_extension=video_file.extension,
-                        detected_code=code,
-                        error_message=error_message
-                    )
-                
-                return jsonify(result)
-            
-            return jsonify({'success': True, 'metadata': metadata.to_dict()})
-        else:
+        if not metadata:
             logger.warning(f"API: No metadata found for {code}")
             if file_path and file_path.exists():
                 file_stat = file_path.stat()
@@ -170,6 +127,105 @@ def scrape_metadata_endpoint():
                     error_message=f'No metadata found for {code}'
                 )
             return jsonify({'success': False, 'error': f'No metadata found for {code}'})
+
+        logger.info(f"API: Successfully scraped metadata for {code}")
+
+        success_config = config_data.get('scraping', {}).get('success_criteria', {})
+        require_actress = success_config.get('require_actress', True)
+        require_title = success_config.get('require_title', True)
+        require_code = success_config.get('require_code', True)
+        actor_selection = organization_config.get('actor_selection', 'first')
+
+        missing_fields: List[str] = []
+        primary_actress = _select_primary_actress(metadata.actresses)
+
+        if require_actress and not primary_actress:
+            missing_fields.append('actress')
+        if require_title and not metadata.title:
+            missing_fields.append('title')
+        if require_code and not metadata.code:
+            missing_fields.append('code')
+
+        if missing_fields:
+            error_message = f"刮削结果缺少: {', '.join(missing_fields)}"
+            if file_path and file_path.exists():
+                file_stat = file_path.stat()
+                history_manager.record_failure(
+                    original_filename=file_path.name,
+                    original_path=str(file_path),
+                    file_size=file_stat.st_size,
+                    file_extension=file_path.suffix,
+                    detected_code=code,
+                    error_message=error_message
+                )
+            return jsonify({
+                'success': False,
+                'error': error_message,
+                'details': {
+                    'missing_fields': missing_fields
+                }
+            })
+
+        if primary_actress:
+            if actor_selection == 'first':
+                metadata.actresses = [primary_actress]
+            else:
+                remaining = [name for name in metadata.actresses if name != primary_actress]
+                metadata.actresses = [primary_actress] + remaining
+
+        if file_path and file_path.exists():
+            # Create VideoFile instance from path
+            file_stat = file_path.stat()
+            video_file = VideoFile(
+                file_path=str(file_path),
+                filename=file_path.name,
+                file_size=file_stat.st_size,
+                extension=file_path.suffix,
+                detected_code=code
+            )
+
+            logger.info(f"Organizing file: {file_path_str}")
+            result = file_organizer.organize_file(video_file, metadata)
+
+            if result.get('success'):
+                # Get details from the correct field
+                details = result.get('details', {})
+                target_path = details.get('target_path', '')
+                logger.info(f"Successfully organized file to: {target_path}")
+                history_manager.record_success(
+                    original_filename=video_file.filename,
+                    original_path=str(video_file.file_path),
+                    file_size=video_file.file_size,
+                    file_extension=video_file.extension,
+                    detected_code=code,
+                    new_filename=Path(target_path).name if target_path else '',
+                    new_path=target_path,
+                    metadata=metadata.to_dict(),
+                    scraper_used=getattr(metadata, 'source', 'Unknown')
+                )
+                # Add data field for frontend compatibility
+                result['data'] = details
+            else:
+                # Check if it's due to invalid actress
+                details = result.get('details', {})
+                if details.get('reason') == 'invalid_actress':
+                    logger.warning(f"File kept in original location due to invalid actress: {video_file.filename}")
+                    error_message = "No valid actress information - file preserved in original location"
+                else:
+                    error_message = result.get('message', result.get('error', 'Unknown organization error'))
+                logger.error(f"Failed to organize file: {error_message}")
+                history_manager.record_failure(
+                    original_filename=video_file.filename,
+                    original_path=str(video_file.file_path),
+                    file_size=video_file.file_size,
+                    file_extension=video_file.extension,
+                    detected_code=code,
+                    error_message=error_message
+                )
+
+            return jsonify(result)
+
+        return jsonify({'success': True, 'metadata': metadata.to_dict()})
             
     except Exception as e:
         logger.error(f"API scraping error: {e}", exc_info=True)

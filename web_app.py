@@ -10,10 +10,13 @@ import json
 import yaml
 import asyncio
 import logging
+import re
+import shutil
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
+from urllib.parse import urlparse
 from copy import deepcopy
 from flask import Flask, render_template, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
@@ -31,8 +34,7 @@ from src.models.video_file import VideoFile
 from src.models.movie_metadata import MovieMetadata
 from src.scanner.file_scanner import FileScanner
 from src.scrapers.scraper_factory import ScraperFactory
-from src.utils.javdb_login import JavDBLoginManager
-from src.utils.javdb_login_vnc import JavDBLoginVNC
+from src.utils.javdb_cookie_import import JavDBCookieImporter
 from src.utils.pattern_manager import PatternManager, CodePattern
 
 # 创建Flask应用
@@ -63,7 +65,6 @@ task_queue = queue.Queue()
 current_task = None
 task_history = []
 log_queue = queue.Queue(maxsize=1000)
-vnc_login_manager = None  # VNC登录管理器
 
 
 DEFAULT_TOML_CONFIG: Dict[str, Any] = {
@@ -77,6 +78,20 @@ DEFAULT_TOML_CONFIG: Dict[str, Any] = {
         'target': '/app/target',
         'config': '/app/config',
         'logs': '/app/logs'
+    },
+    'scrapers': {
+        'javdb': {
+            'base_url': 'https://javdb.com',
+            'mirrors': []
+        }
+    },
+    'scraping': {
+        'success_criteria': {
+            'require_actress': True,
+            'require_title': True,
+            'require_code': True,
+            'images_optional': True
+        }
     },
     'selenium': {
         'grid_url': 'http://localhost:4444',
@@ -106,18 +121,31 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         'source': './source',
         'target': './organized'
     },
+    'scrapers': {
+        'javdb': {
+            'base_url': 'https://javdb.com',
+            'mirrors': []
+        }
+    },
     'scraping': {
         'priority': ['javdb', 'javlibrary'],
         'max_concurrent_files': 2,
         'retry_attempts': 3,
-        'timeout': 30
+        'timeout': 30,
+        'success_criteria': {
+            'require_actress': True,
+            'require_title': True,
+            'require_code': True,
+            'images_optional': True
+        }
     },
     'organization': {
         'naming_pattern': '{actress}/{code}/{code}.{ext}',
         'conflict_resolution': 'rename',
         'download_images': True,
         'save_metadata': True,
-        'safe_mode': True
+        'safe_mode': False,
+        'actor_selection': 'first'
     },
     'browser': {
         'headless': True,
@@ -149,6 +177,7 @@ setInterval(function() {
 """
 
 SELENIUM_DEFAULT_URLS = ['http://localhost:4444/wd/hub']
+COOKIE_ATTRIBUTE_KEYS = {'path', 'domain', 'expires', 'max-age', 'samesite', 'comment', 'version'}
 
 # 自定义日志处理器，发送到Web界面
 class WebSocketLogHandler(logging.Handler):
@@ -231,77 +260,238 @@ def _build_proxy_settings(config: Dict[str, Any]) -> Optional[Dict[str, str]]:
     }
 
 
+def _resolve_config_dir(config: Dict[str, Any]) -> Path:
+    return Path(config.get('directories', {}).get('config', '/app/config'))
+
+
+def _get_javdb_base_url(config: Dict[str, Any]) -> str:
+    scrapers_cfg = config.get('scrapers', {})
+    if isinstance(scrapers_cfg, dict):
+        javdb_cfg = scrapers_cfg.get('javdb', {})
+        if isinstance(javdb_cfg, dict):
+            base_url = javdb_cfg.get('base_url')
+            if base_url:
+                return base_url if base_url.startswith('http') else f'https://{base_url}'
+
+    legacy_cfg = config.get('javdb', {})
+    if isinstance(legacy_cfg, dict):
+        base_url = legacy_cfg.get('base_url')
+        if base_url:
+            return base_url if base_url.startswith('http') else f'https://{base_url}'
+
+    return JAVDB_DEFAULT_URL
+
+
+def _get_cookie_domain(base_url: str) -> str:
+    parsed = urlparse(base_url)
+    domain = parsed.netloc or base_url
+    domain = domain.split('/', 1)[0]
+    domain = domain.split(':', 1)[0]
+    if domain and not domain.startswith('.'):
+        domain = f'.{domain}'
+    return domain.lower() or '.javdb.com'
+
+
+def _sanitize_cookie_domain(domain: Optional[str], default_domain: str) -> str:
+    if not domain:
+        return default_domain
+
+    parsed = domain.strip()
+    if parsed.startswith('http'):
+        parsed = urlparse(parsed).netloc or parsed
+    parsed = parsed.split(':', 1)[0]
+    if parsed and not parsed.startswith('.'):
+        parsed = f'.{parsed}'
+    return parsed.lower() or default_domain
+
+
+def _normalize_cookie_dict(cookie_data: Dict[str, Any], default_domain: str) -> Dict[str, Any]:
+    name = str(cookie_data.get('name', '')).strip()
+    if not name:
+        raise ValueError('Cookie缺少名称')
+
+    value = str(cookie_data.get('value', '')).strip()
+    if value == '':
+        raise ValueError(f'Cookie "{name}" 缺少值')
+
+    def _to_bool(raw: Any) -> bool:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() in {'true', '1', 'yes', 'on'}
+        return bool(raw)
+
+    secure_flag = cookie_data.get('secure', cookie_data.get('Secure', False))
+    http_only_flag = cookie_data.get('httpOnly', cookie_data.get('HttpOnly', False))
+
+    normalized: Dict[str, Any] = {
+        'name': name,
+        'value': value,
+        'domain': _sanitize_cookie_domain(cookie_data.get('domain'), default_domain),
+        'path': cookie_data.get('path') or '/',
+        'secure': _to_bool(secure_flag),
+        'httpOnly': _to_bool(http_only_flag),
+    }
+
+    same_site = cookie_data.get('sameSite') or cookie_data.get('SameSite') or cookie_data.get('samesite')
+    if same_site:
+        normalized['sameSite'] = same_site
+
+    expiry = (
+        cookie_data.get('expiry')
+        or cookie_data.get('expires')
+        or cookie_data.get('Expires')
+        or cookie_data.get('max-age')
+        or cookie_data.get('Max-Age')
+    )
+    if expiry:
+        try:
+            normalized['expiry'] = int(expiry)
+        except (ValueError, TypeError):
+            # 保留原始字符串，供后续验证工具使用
+            normalized['expiry'] = expiry
+
+    return normalized
+
+
+def _parse_cookie_string(cookie_string: str, default_domain: str) -> List[Dict[str, Any]]:
+    text = (cookie_string or '').strip()
+    if not text:
+        return []
+
+    lower_text = text.lower()
+    if 'set-cookie:' in lower_text:
+        segments = [seg.strip() for seg in re.split(r'(?i)set-cookie:', text) if seg.strip()]
+    else:
+        segments = [seg.strip() for seg in re.split(r'[\r\n]+', text) if seg.strip()]
+        if not segments:
+            segments = [text]
+
+    cookies: List[Dict[str, Any]] = []
+    additional_candidates: List[Dict[str, Any]] = []
+
+    for segment in segments:
+        parts = [p.strip() for p in segment.split(';') if p.strip()]
+        if not parts:
+            continue
+
+        name_part = parts[0]
+        if '=' not in name_part:
+            continue
+
+        name, value = name_part.split('=', 1)
+        cookie_data: Dict[str, Any] = {'name': name, 'value': value}
+
+        for attr in parts[1:]:
+            lower_attr = attr.lower()
+            if lower_attr == 'secure':
+                cookie_data['secure'] = True
+                continue
+            if lower_attr == 'httponly':
+                cookie_data['httpOnly'] = True
+                continue
+            if '=' not in attr:
+                continue
+
+            attr_name, attr_value = attr.split('=', 1)
+            attr_name_lower = attr_name.strip().lower()
+            attr_value = attr_value.strip()
+
+            if attr_name_lower in COOKIE_ATTRIBUTE_KEYS:
+                if attr_name_lower == 'path':
+                    cookie_data['path'] = attr_value
+                elif attr_name_lower == 'domain':
+                    cookie_data['domain'] = attr_value
+                elif attr_name_lower in {'expires', 'max-age'}:
+                    cookie_data['expiry'] = attr_value
+                elif attr_name_lower == 'samesite':
+                    cookie_data['sameSite'] = attr_value
+            else:
+                additional_candidates.append({'name': attr_name.strip(), 'value': attr_value})
+
+        cookies.append(_normalize_cookie_dict(cookie_data, default_domain))
+
+    if not cookies:
+        # 处理简单的 name=value; name2=value2 情况
+        simple_pairs = [pair.strip() for pair in text.split(';') if pair.strip()]
+        for pair in simple_pairs:
+            if '=' not in pair:
+                continue
+            key, value = pair.split('=', 1)
+            try:
+                cookies.append(_normalize_cookie_dict({'name': key.strip(), 'value': value.strip()}, default_domain))
+            except ValueError:
+                continue
+    else:
+        for candidate in additional_candidates:
+            try:
+                cookies.append(_normalize_cookie_dict(candidate, default_domain))
+            except ValueError:
+                continue
+
+    return cookies
+
+
+def _deduplicate_cookies(cookies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: Dict[str, Dict[str, Any]] = {}
+    for cookie in cookies:
+        deduped[cookie['name']] = cookie
+    return list(deduped.values())
+
+
+def _parse_cookie_payload(payload: Any, default_domain: str) -> List[Dict[str, Any]]:
+    if payload is None:
+        raise ValueError('未提供Cookie数据')
+
+    if isinstance(payload, str):
+        text = payload.strip()
+        if not text:
+            raise ValueError('Cookie字符串为空')
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            cookies = _parse_cookie_string(text, default_domain)
+        else:
+            cookies = _parse_cookie_payload(parsed, default_domain)
+        return _deduplicate_cookies(cookies)
+
+    if isinstance(payload, list):
+        cookies: List[Dict[str, Any]] = []
+        for item in payload:
+            if isinstance(item, dict):
+                cookies.append(_normalize_cookie_dict(item, default_domain))
+            elif isinstance(item, str):
+                cookies.extend(_parse_cookie_string(item, default_domain))
+            else:
+                raise ValueError('Cookie列表中的元素必须是对象或字符串')
+        return _deduplicate_cookies(cookies)
+
+    if isinstance(payload, dict):
+        if 'cookies' in payload:
+            return _parse_cookie_payload(payload['cookies'], default_domain)
+
+        cookies: List[Dict[str, Any]] = []
+        for name, value in payload.items():
+            if isinstance(value, dict):
+                cookie_data = {**value, 'name': name}
+                cookies.append(_normalize_cookie_dict(cookie_data, default_domain))
+            else:
+                cookies.append(_normalize_cookie_dict({'name': name, 'value': value}, default_domain))
+        return _deduplicate_cookies(cookies)
+
+    raise ValueError('不支持的Cookie数据格式')
+
+
+def _get_cookie_file_path(config: Dict[str, Any]) -> Path:
+    config_dir = _resolve_config_dir(config)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / 'javdb_cookies.json'
+
+
 def _inject_login_monitor(content: str) -> str:
     if '</body>' in content:
         return content.replace('</body>', LOGIN_MONITOR_SCRIPT + '</body>')
     return content + LOGIN_MONITOR_SCRIPT
-
-
-def _ensure_vnc_login_manager() -> Path:
-    global vnc_login_manager
-    config = load_config()
-    config_dir = Path(config.get('directories', {}).get('config', '/app/config'))
-
-    if vnc_login_manager is None:
-        try:
-            vnc_login_manager = JavDBLoginVNC(config_dir=str(config_dir))
-            logger.info("VNC登录管理器初始化成功")
-        except Exception as exc:
-            logger.error(f"VNC登录管理器初始化失败: {exc}")
-            raise RuntimeError(f'Failed to initialize VNC Login Manager: {exc}') from exc
-
-    return config_dir
-
-
-def _retrieve_javdb_cookies(
-    config_dir: Path,
-    selenium_urls: Optional[List[str]] = None,
-) -> Tuple[int, bool]:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-
-    urls = selenium_urls or SELENIUM_DEFAULT_URLS
-
-    options = Options()
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-
-    driver = None
-    for selenium_url in urls:
-        try:
-            driver = webdriver.Remote(command_executor=selenium_url, options=options)
-            logger.info(f"Connected to Selenium at {selenium_url}")
-            break
-        except Exception as exc:
-            logger.debug(f"Failed to connect to {selenium_url}: {exc}")
-
-    if driver is None:
-        raise RuntimeError('Unable to connect to Selenium Grid. Please ensure browser is open.')
-
-    try:
-        current_url = driver.current_url
-        if 'javdb.com' not in current_url:
-            driver.get(JAVDB_DEFAULT_URL)
-            time.sleep(2)
-
-        cookies = driver.get_cookies()
-    finally:
-        driver.quit()
-
-    if not cookies:
-        raise RuntimeError('No cookies found. Please log in to JavDB first.')
-
-    cookie_file = config_dir / 'javdb_cookies.json'
-    cookie_data = {
-        'cookies': cookies,
-        'timestamp': datetime.now().isoformat(),
-        'domain': JAVDB_DEFAULT_URL,
-    }
-    cookie_file.write_text(json.dumps(cookie_data, indent=2), encoding='utf-8')
-
-    has_session = any(cookie.get('name') == '_jdb_session' for cookie in cookies)
-    return len(cookies), has_session
-
 
 # 路由定义
 
@@ -716,22 +906,17 @@ def delete_files():
         for path_str in paths:
             try:
                 path = Path(path_str)
-                if path.exists():
-                    # 确保只能删除source目录下的文件
-                    config = load_config()
-                    source_dir = Path(config['directories']['source']).resolve()
-                    file_path = path.resolve()
-                    
-                    # 安全检查：确保文件在source目录内
-                    if not str(file_path).startswith(str(source_dir)):
-                        failed.append({'path': str(path), 'error': '不允许删除源目录外的文件'})
-                        continue
-                    
-                    path.unlink()
-                    deleted.append(str(path))
-                    logger.info(f"已删除文件: {path}")
-                else:
+                if not path.exists():
                     failed.append({'path': str(path), 'error': '文件不存在'})
+                    continue
+
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+
+                deleted.append(str(path))
+                logger.info(f"已删除: {path}")
             except Exception as e:
                 failed.append({'path': str(path_str), 'error': str(e)})
                 logger.error(f"删除文件失败 {path_str}: {e}")
@@ -750,95 +935,121 @@ def delete_files():
 @app.route('/api/javdb/proxy')
 def javdb_proxy():
     """代理JavDB页面请求"""
-    url = request.args.get('url', JAVDB_DEFAULT_URL)
+    requested_url = request.args.get('url')
     config = load_config()
+    base_url = _get_javdb_base_url(config)
+    target_url = requested_url or base_url
+    if requested_url and requested_url.startswith('/'):
+        parsed = urlparse(base_url)
+        target_url = f"{parsed.scheme or 'https'}://{parsed.netloc}{requested_url}"
     proxies = _build_proxy_settings(config)
-    cookies = session.get('javdb_cookies', {})
+
+    cookie_file = _resolve_config_dir(config) / 'javdb_cookies.json'
+    cookies: Dict[str, str] = {}
+    if cookie_file.exists():
+        try:
+            cookie_data = json.loads(cookie_file.read_text(encoding='utf-8'))
+            for cookie in cookie_data.get('cookies', []):
+                name = cookie.get('name')
+                value = cookie.get('value')
+                if name and value:
+                    cookies[name] = value
+        except Exception as exc:
+            logger.warning(f"读取JavDB cookies失败: {exc}")
 
     try:
         response = requests.get(
-            url,
+            target_url,
             headers=JAVDB_HEADERS,
             proxies=proxies,
             cookies=cookies,
             timeout=30,
         )
-        session['javdb_cookies'] = dict(response.cookies)
         return _inject_login_monitor(response.text)
     except requests.RequestException as exc:
         logger.error(f"代理JavDB失败: {exc}")
         return (
             f"<html><body><h1>无法访问JavDB</h1><p>{str(exc)}</p>"
-            "<p>请检查代理配置</p></body></html>"
+            "<p>请检查代理配置或Cookie是否有效</p></body></html>"
         )
 
-@app.route('/api/javdb/login', methods=['POST'])
-def javdb_login():
-    """Manages JAVDB login via a VNC session."""
-    try:
-        config_dir = _ensure_vnc_login_manager()
-    except RuntimeError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 500
-
+@app.route('/api/javdb/cookies', methods=['POST'])
+def save_javdb_cookies():
+    """保存用户粘贴的JavDB cookies"""
     try:
         data = request.json or {}
-        action = data.get('action', 'start')
+        raw_cookies = data.get('cookies')
+        if raw_cookies is None and 'raw' in data:
+            raw_cookies = data['raw']
+        if raw_cookies is None:
+            raw_body = request.get_data(as_text=True).strip()
+            raw_cookies = raw_body or None
 
-        if action == 'start':
-            result = vnc_login_manager.generate_login_url()
-            if result.get('success'):
-                result['vnc_url'] = 'http://localhost:7900'
-                result['selenium_url'] = 'http://localhost:4444'
-                result['message'] = 'Please open the VNC URL in a new tab to complete login'
-            return jsonify(result)
+        config = load_config()
+        base_url = _get_javdb_base_url(config)
+        default_domain = _get_cookie_domain(base_url)
 
-        if action in {'check', 'save'}:
-            try:
-                cookie_count, has_session = _retrieve_javdb_cookies(config_dir)
-            except RuntimeError as exc:
-                logger.error(f"Error retrieving JavDB cookies: {exc}")
-                return jsonify({'success': False, 'error': str(exc)})
+        cookies = _parse_cookie_payload(raw_cookies, default_domain)
+        if not cookies:
+            raise ValueError('未解析到任何有效的Cookie')
 
-            if action == 'check':
-                if has_session:
-                    return jsonify({
-                        'success': True,
-                        'message': 'Cookies已成功保存！',
-                        'cookie_count': cookie_count
-                    })
-                return jsonify({
-                    'success': False,
-                    'error': 'Cookies已保存，但未找到登录会话。请先在浏览器中登录JavDB。'
-                })
+        cookie_file = _get_cookie_file_path(config)
+        cookie_data = {
+            'cookies': cookies,
+            'timestamp': datetime.now().isoformat(),
+            'domain': base_url
+        }
+        cookie_file.write_text(json.dumps(cookie_data, indent=2, ensure_ascii=False), encoding='utf-8')
 
-            return jsonify({
-                'success': True,
-                'cookie_count': cookie_count,
-                'has_session': has_session,
-                'message': 'Cookies saved successfully' if has_session else 'Cookies saved but no session found'
-            })
+        has_session = any(cookie.get('name') == '_jdb_session' for cookie in cookies)
 
-        logger.error(f"Unknown JAVDB login action: {action}")
-        return jsonify({'success': False, 'error': f'Unknown action: {action}'})
+        logger.info("已保存 %d 个 JavDB cookies (手动输入)", len(cookies))
+        return jsonify({
+            'success': True,
+            'cookie_count': len(cookies),
+            'has_session': has_session
+        })
 
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
     except Exception as exc:
-        logger.error(f"VNC login operation failed: {exc}")
-        return jsonify({'success': False, 'error': str(exc)})
+        logger.error(f"保存JavDB cookies失败: {exc}")
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 @app.route('/api/javdb/cookie-status', methods=['GET'])
 def javdb_cookie_status():
     """获取JavDB cookie状态"""
     try:
         config = load_config()
-        config_dir = config.get('directories', {}).get('config', '/app/config')
-        login_manager = JavDBLoginManager(config_dir=config_dir)
-        status = login_manager.get_cookie_status()
-        
-        return jsonify({
-            'success': True,
-            'status': status
-        })
-        
+        base_url = _get_javdb_base_url(config)
+        cookie_file = _resolve_config_dir(config) / 'javdb_cookies.json'
+
+        if not cookie_file.exists():
+            return jsonify({'success': True, 'status': {'exists': False, 'domain': base_url}})
+
+        data = json.loads(cookie_file.read_text(encoding='utf-8'))
+        cookies = data.get('cookies', [])
+        timestamp = data.get('timestamp')
+        has_session = any(cookie.get('name') == '_jdb_session' for cookie in cookies)
+
+        status = {
+            'exists': True,
+            'cookie_count': len(cookies),
+            'has_session': has_session,
+            'domain': data.get('domain', base_url)
+        }
+
+        if timestamp:
+            status['timestamp'] = timestamp
+            try:
+                saved_dt = datetime.fromisoformat(timestamp)
+                now = datetime.now(saved_dt.tzinfo) if saved_dt.tzinfo else datetime.now()
+                status['age_days'] = max((now - saved_dt).days, 0)
+            except ValueError:
+                status['age_days'] = None
+
+        return jsonify({'success': True, 'status': status})
+
     except Exception as e:
         logger.error(f"获取cookie状态失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -849,10 +1060,8 @@ def verify_javdb_cookies():
     try:
         config = load_config()
         config_dir = config.get('directories', {}).get('config', '/app/config')
-        
-        # 使用增强的验证方法
-        from src.utils.javdb_cookie_import import JavDBCookieImporter
-        importer = JavDBCookieImporter(config_dir=config_dir)
+        base_url = _get_javdb_base_url(config)
+        importer = JavDBCookieImporter(config_dir=config_dir, base_url=base_url)
         
         # 先尝试修复格式
         importer.fix_cookie_format()
@@ -877,16 +1086,15 @@ def clear_javdb_cookies():
     """清除保存的JavDB cookies"""
     try:
         config = load_config()
-        config_dir = config.get('directories', {}).get('config', '/app/config')
-        login_manager = JavDBLoginManager(config_dir=config_dir)
-        
-        success = login_manager.clear_cookies()
-        
-        return jsonify({
-            'success': success,
-            'message': 'Cookies已清除' if success else '清除失败'
-        })
-        
+        cookie_file = _resolve_config_dir(config) / 'javdb_cookies.json'
+
+        if cookie_file.exists():
+            cookie_file.unlink()
+            logger.info("已清除JavDB cookies")
+            return jsonify({'success': True, 'message': 'Cookies已清除'})
+
+        return jsonify({'success': True, 'message': '未找到Cookie文件，无需清理'})
+
     except Exception as e:
         logger.error(f"清除cookies失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -976,7 +1184,7 @@ def _create_file_organizer(config: Dict[str, Any]) -> FileOrganizer:
         naming_pattern=organization.get('naming_pattern', '{actress}/{code}/{code}.{ext}'),
         conflict_resolution=ConflictResolution[organization.get('conflict_resolution', 'rename').upper()],
         create_metadata_files=organization.get('save_metadata', True),
-        safe_mode=organization.get('safe_mode', True),
+        safe_mode=organization.get('safe_mode', False),
     )
 
 
@@ -1161,19 +1369,7 @@ if __name__ == '__main__':
     Path('web/templates').mkdir(parents=True, exist_ok=True)
     Path('config').mkdir(parents=True, exist_ok=True)
     Path('logs').mkdir(parents=True, exist_ok=True)
-    
-    # 初始化VNC登录管理器
-    try:
-        config = load_config()
-        config_dir = config.get('directories', {}).get('config', '/app/config')
-        vnc_login_manager = JavDBLoginVNC(
-            config_dir=config_dir
-        )
-        logger.info("VNC登录管理器初始化成功")
-    except Exception as e:
-        logger.error(f"VNC登录管理器初始化失败: {e}")
-        vnc_login_manager = None
-    
+
     # 启动应用
     logger.info("启动AutoJAV Web界面...")
     # 从环境变量获取端口，默认8080

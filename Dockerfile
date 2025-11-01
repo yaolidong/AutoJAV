@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Production stage
-from python:3.11-slim
+from python:3.11-slim as runtime
 
 # Install system dependencies for Chrome and application
 RUN apt-get update && apt-get install -y \
@@ -89,5 +89,13 @@ ENV PYTHONPATH=/app/src \
     WDM_LOG=false \
     SE_DRIVER_PATH=/usr/bin/chromedriver
 
-# Default entrypoint: run scraper pipeline
-ENTRYPOINT ["python", "main.py"]
+# Default command (can be overridden by docker compose services)
+# Base runtime image exports Python path and entrypoint
+ENV PYTHONPATH=/app/src \
+    PYTHONUNBUFFERED=1
+
+CMD ["python", "main.py"]
+
+# --- Selenium Grid Stage ------------------------------------------------- #
+
+from seleniarm/standalone-chromium:latest as selenium_grid

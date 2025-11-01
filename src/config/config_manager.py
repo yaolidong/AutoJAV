@@ -95,6 +95,9 @@ class ConfigManager:
         
         # Override with environment variables
         self._apply_env_overrides()
+
+        if isinstance(self._config_data, dict):
+            self._merge_defaults(self._config_data, self._get_default_config())
         
         return self._config_data
     
@@ -113,19 +116,29 @@ class ConfigManager:
             },
             'scrapers': {
                 'javdb': {
-                    'base_url': os.getenv('JAVDB_BASE_URL', 'https://javdb563.com')
+                    'base_url': os.getenv('JAVDB_BASE_URL', 'https://javdb.com'),
+                    'mirrors': []
                 }
             },
             'scraping': {
                 'priority': ['javdb', 'javlibrary'],
                 'max_concurrent_files': 3,
                 'retry_attempts': 3,
-                'timeout': 30
+                'timeout': 30,
+                'success_criteria': {
+                    'require_actress': True,
+                    'require_title': True,
+                    'require_code': True,
+                    'images_optional': True
+                }
             },
             'organization': {
                 'naming_pattern': '{actress}/{code}/{code}.{ext}',
+                'conflict_resolution': 'rename',
                 'download_images': True,
-                'save_metadata': True
+                'save_metadata': True,
+                'safe_mode': False,
+                'actor_selection': 'first'
             },
             'browser': {
                 'headless': True,
@@ -139,6 +152,21 @@ class ConfigManager:
             },
             'supported_extensions': ['.mp4', '.mkv', '.avi', '.wmv', '.mov', '.flv', '.webm', '.m4v']
         }
+
+    def _merge_defaults(self, target: Dict[str, Any], defaults: Dict[str, Any]) -> None:
+        """Recursively merge default configuration values without overwriting user-defined settings."""
+        for key, default_value in defaults.items():
+            if key not in target:
+                if isinstance(default_value, dict):
+                    target[key] = default_value.copy()
+                elif isinstance(default_value, list):
+                    target[key] = list(default_value)
+                else:
+                    target[key] = default_value
+            else:
+                current_value = target[key]
+                if isinstance(default_value, dict) and isinstance(current_value, dict):
+                    self._merge_defaults(current_value, default_value)
     
     def _apply_env_overrides(self):
         """Apply environment variable overrides to configuration."""

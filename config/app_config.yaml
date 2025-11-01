@@ -15,7 +15,7 @@ directories:
 
 # Network Configuration
 network:
-  proxy_url: "http://192.168.3.2:6152"
+  proxy_url: ""
 
 # Processing Configuration
 processing:
@@ -42,4 +42,4 @@ web:
 # Scraper configuration
 scrapers:
   javdb:
-    base_url: "https://javdb563.com"
+    base_url: "https://javdb.com"

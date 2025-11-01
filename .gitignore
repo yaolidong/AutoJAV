@@ -54,10 +54,14 @@ logs/
 
 # Configuration (may contain sensitive data)
 config/config.yaml
+config/javdb_cookies.json
+config/login_token_*.json
 .env
 
 # Downloaded content
 downloads/
+organized/
+progress/
 target/
 source/
 

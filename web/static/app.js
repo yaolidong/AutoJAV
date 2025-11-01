@@ -25,7 +25,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // WebSocket连接
 function initWebSocket() {
-    socket = io();
+    if (typeof window.io !== 'function') {
+        console.warn('Socket.IO 客户端未加载，跳过实时连接');
+        updateConnectionStatus(false);
+        return;
+    }
+
+    try {
+        socket = io();
+    } catch (error) {
+        console.error('WebSocket 初始化失败:', error);
+        updateConnectionStatus(false);
+        return;
+    }
     
     socket.on('connect', function() {
         console.log('WebSocket连接成功');
@@ -195,11 +207,44 @@ async function loadConfig() {
         document.getElementById('config-conflict-resolution').value = 
             currentConfig.organization?.conflict_resolution || 'rename';
         document.getElementById('config-safe-mode').checked = 
-            currentConfig.organization?.safe_mode !== false;
+            currentConfig.organization?.safe_mode === true;
         document.getElementById('config-download-images').checked = 
             currentConfig.organization?.download_images !== false;
         document.getElementById('config-save-metadata').checked = 
             currentConfig.organization?.save_metadata !== false;
+
+        const javdbConfig = currentConfig.scrapers?.javdb || {};
+        const baseUrlInput = document.getElementById('config-javdb-base-url');
+        if (baseUrlInput) {
+            baseUrlInput.value = javdbConfig.base_url || 'https://javdb.com';
+        }
+        const mirrorsInput = document.getElementById('config-javdb-mirrors');
+        if (mirrorsInput) {
+            mirrorsInput.value = (javdbConfig.mirrors || []).join('\n');
+        }
+
+        const successCriteria = currentConfig.scraping?.success_criteria || {};
+        const requireActress = document.getElementById('success-require-actress');
+        if (requireActress) {
+            requireActress.checked = successCriteria.require_actress !== false;
+        }
+        const requireTitle = document.getElementById('success-require-title');
+        if (requireTitle) {
+            requireTitle.checked = successCriteria.require_title !== false;
+        }
+        const requireCode = document.getElementById('success-require-code');
+        if (requireCode) {
+            requireCode.checked = successCriteria.require_code !== false;
+        }
+        const imagesOptional = document.getElementById('success-images-optional');
+        if (imagesOptional) {
+            imagesOptional.checked = successCriteria.images_optional !== false;
+        }
+
+        const actorSelection = document.getElementById('config-actor-selection');
+        if (actorSelection) {
+            actorSelection.value = currentConfig.organization?.actor_selection || 'first';
+        }
         
     } catch (error) {
         console.error('加载配置失败:', error);
@@ -211,23 +256,47 @@ async function loadConfig() {
 async function saveConfig() {
     try {
         // 收集表单数据
+        const baseUrl = document.getElementById('config-javdb-base-url')?.value?.trim() || 'https://javdb.com';
+        const mirrorsText = document.getElementById('config-javdb-mirrors')?.value || '';
+        const mirrors = mirrorsText
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0);
+
+        const successCriteria = {
+            require_actress: document.getElementById('success-require-actress')?.checked ?? true,
+            require_title: document.getElementById('success-require-title')?.checked ?? true,
+            require_code: document.getElementById('success-require-code')?.checked ?? true,
+            images_optional: document.getElementById('success-images-optional')?.checked ?? true
+        };
+
+        const actorSelection = document.getElementById('config-actor-selection')?.value || 'first';
+
         const config = {
             directories: {
                 source: document.getElementById('config-source-dir').value,
                 target: document.getElementById('config-target-dir').value
             },
+            scrapers: {
+                javdb: {
+                    base_url: baseUrl,
+                    mirrors: mirrors
+                }
+            },
             scraping: {
                 priority: document.getElementById('config-scraper-priority').value.split(','),
                 max_concurrent_files: parseInt(document.getElementById('config-max-concurrent').value),
                 timeout: parseInt(document.getElementById('config-timeout').value),
-                retry_attempts: 3
+                retry_attempts: currentConfig.scraping?.retry_attempts ?? 3,
+                success_criteria: successCriteria
             },
             organization: {
                 naming_pattern: document.getElementById('config-naming-pattern').value,
                 conflict_resolution: document.getElementById('config-conflict-resolution').value,
                 safe_mode: document.getElementById('config-safe-mode').checked,
                 download_images: document.getElementById('config-download-images').checked,
-                save_metadata: document.getElementById('config-save-metadata').checked
+                save_metadata: document.getElementById('config-save-metadata').checked,
+                actor_selection: actorSelection
             },
             browser: {
                 headless: true,
@@ -1052,7 +1121,7 @@ function cancelRename(index) {
 async function deleteFile(index) {
     const file = window.fileListData[index];
     
-    if (!confirm(`确定要删除文件 "${file.filename}" 吗？`)) {
+    if (!confirm(`确定要永久删除文件 "${file.filename}" 吗？此操作不可恢复！`)) {
         return;
     }
     
@@ -1101,7 +1170,7 @@ async function deleteSelectedFiles() {
         return;
     }
     
-    if (!confirm(`确定要删除选中的 ${checkboxes.length} 个文件吗？`)) {
+    if (!confirm(`确定要永久删除选中的 ${checkboxes.length} 个文件吗？此操作不可恢复！`)) {
         return;
     }
     
@@ -1190,46 +1259,56 @@ async function processFile(index) {
     }
 }
 
-// ==================== JavDB登录相关功能 ====================
+// ==================== JavDB Cookie 功能 ====================
 
-// 检查Cookie状态
 async function checkCookieStatus() {
     try {
         const response = await fetch('/api/javdb/cookie-status');
         const result = await response.json();
-        
-        if (result.success && result.status) {
-            const status = result.status;
-            const statusCard = document.getElementById('cookie-status-card');
-            const statusText = document.getElementById('cookie-status-text');
-            const cookieDetails = document.getElementById('cookie-details');
-            
-            if (status.exists) {
-                if (status.valid) {
-                    statusCard.className = 'card border-success';
-                    statusText.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> Cookies有效';
-                    statusText.className = 'card-text mb-0 text-success';
-                } else {
-                    statusCard.className = 'card border-warning';
-                    statusText.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning"></i> Cookies可能已过期';
-                    statusText.className = 'card-text mb-0 text-warning';
-                }
-                
-                // 显示详细信息
-                if (status.timestamp) {
-                    document.getElementById('cookie-timestamp').textContent = new Date(status.timestamp).toLocaleString();
-                }
-                if (status.cookie_count !== undefined) {
-                    document.getElementById('cookie-count').textContent = status.cookie_count;
-                }
-                if (status.age_days !== undefined) {
-                    document.getElementById('cookie-age').textContent = `${status.age_days} 天`;
-                }
+
+        if (!result.success) {
+            showToast(result.error || '获取Cookie状态失败', 'danger');
+            return;
+        }
+
+        const status = result.status || {};
+        const statusCard = document.getElementById('cookie-status-card');
+        const statusText = document.getElementById('cookie-status-text');
+        const cookieDetails = document.getElementById('cookie-details');
+
+        if (!statusCard || !statusText) {
+            return;
+        }
+
+        if (status.exists) {
+            const hasSession = status.has_session === true;
+            statusCard.className = hasSession ? 'card border-success' : 'card border-warning';
+            statusText.className = hasSession ? 'card-text mb-0 text-success' : 'card-text mb-0 text-warning';
+            statusText.innerHTML = hasSession
+                ? '<i class="bi bi-check-circle-fill text-success"></i> Cookies有效'
+                : '<i class="bi bi-exclamation-triangle-fill text-warning"></i> Cookies已保存，尚未检测到登录会话';
+
+            if (cookieDetails) {
                 cookieDetails.style.display = 'block';
-            } else {
-                statusCard.className = 'card border-secondary';
-                statusText.innerHTML = '<i class="bi bi-x-circle text-secondary"></i> 未找到保存的Cookies';
-                statusText.className = 'card-text mb-0 text-secondary';
+                const timestamp = status.timestamp ? new Date(status.timestamp).toLocaleString() : '未知';
+                const ageText = typeof status.age_days === 'number' ? `${status.age_days} 天` : '未知';
+
+                const domainEl = document.getElementById('cookie-domain');
+                if (domainEl) domainEl.textContent = status.domain || '-';
+                const timestampEl = document.getElementById('cookie-timestamp');
+                if (timestampEl) timestampEl.textContent = timestamp;
+                const countEl = document.getElementById('cookie-count');
+                if (countEl) countEl.textContent = status.cookie_count ?? 0;
+                const sessionEl = document.getElementById('cookie-session');
+                if (sessionEl) sessionEl.textContent = hasSession ? '是' : '否';
+                const ageEl = document.getElementById('cookie-age');
+                if (ageEl) ageEl.textContent = ageText;
+            }
+        } else {
+            statusCard.className = 'card border-secondary';
+            statusText.className = 'card-text mb-0 text-secondary';
+            statusText.innerHTML = '<i class="bi bi-x-circle text-secondary"></i> 未找到保存的Cookies';
+            if (cookieDetails) {
                 cookieDetails.style.display = 'none';
             }
         }
@@ -1239,365 +1318,135 @@ async function checkCookieStatus() {
     }
 }
 
-// 执行JavDB登录 - 提供多种登录方式
-async function performJavDBLogin() {
-    console.log('开始JavDB登录...');
-    const loginBtn = document.getElementById('login-btn');
-    
-    // 创建登录选项弹窗
-    const loginOptions = `
-        <div class="modal fade" id="javdbLoginModal" tabindex="-1">
-            <div class="modal-dialog modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">JavDB 登录</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div id="login-options">
-                            <div class="alert alert-info">
-                                <strong>提示：</strong>JavDB 需要通过代理访问。请先配置代理，然后选择登录方式。
-                            </div>
-                            
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="card">
-                                        <div class="card-body">
-                                            <h5 class="card-title">
-                                                <i class="bi bi-window"></i> 浏览器窗口登录
-                                            </h5>
-                                            <p class="card-text text-muted">
-                                                打开浏览器窗口，您可以手动登录，系统会自动保存Cookies
-                                            </p>
-                                            <button class="btn btn-primary" onclick="openBrowserLogin()">
-                                                <i class="bi bi-box-arrow-up-right"></i> 打开浏览器
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div class="col-md-6">
-                                    <div class="card">
-                                        <div class="card-body">
-                                            <h5 class="card-title">
-                                                <i class="bi bi-key"></i> 账号密码登录
-                                            </h5>
-                                            <p class="card-text text-muted">
-                                                输入账号密码和验证码进行登录（需要手动输入验证码）
-                                            </p>
-                                            <button class="btn btn-secondary" onclick="showManualLogin()">
-                                                <i class="bi bi-person-circle"></i> 手动登录
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="mt-3">
-                                <div class="card border-warning">
-                                    <div class="card-body">
-                                        <h6 class="card-title text-warning">
-                                            <i class="bi bi-exclamation-triangle"></i> 配置代理
-                                        </h6>
-                                        <p class="card-text small">
-                                            如果无法访问JavDB，请先配置代理：
-                                        </p>
-                                        <pre class="bg-light p-2 small">docker exec -it av-metadata-scraper vi /app/config/config.yaml
-
-# 添加以下配置：
-network:
-  proxy_url: "http://your-proxy:port"</pre>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div id="browser-login-status" style="display: none;">
-                            <div class="text-center">
-                                <div class="spinner-border text-primary mb-3" role="status">
-                                    <span class="visually-hidden">等待登录...</span>
-                                </div>
-                                <h5>浏览器窗口已打开</h5>
-                                <p>请在打开的浏览器窗口中完成JavDB登录</p>
-                                <p class="text-muted">登录成功后，系统会自动保存Cookies并关闭窗口</p>
-                                <div class="mt-3">
-                                    <button class="btn btn-secondary" onclick="checkBrowserLoginStatus()">
-                                        <i class="bi bi-arrow-clockwise"></i> 检查状态
-                                    </button>
-                                    <button class="btn btn-danger" onclick="closeBrowserLogin()">
-                                        <i class="bi bi-x-circle"></i> 关闭窗口
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div id="manual-login-form" style="display: none;">
-                            <!-- 手动登录表单内容会在showManualLogin()中添加 -->
-                        <h5 class="modal-title">JavDB 登录</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div id="login-step-1">
-                            <div class="mb-3">
-                                <label class="form-label">用户名</label>
-                                <input type="text" class="form-control" id="javdb-username" placeholder="请输入JavDB用户名">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">密码</label>
-                                <input type="password" class="form-control" id="javdb-password" placeholder="请输入密码">
-                            </div>
-                            <button class="btn btn-primary" onclick="getJavDBCaptcha()">
-                                <i class="bi bi-arrow-right"></i> 获取验证码
-                            </button>
-                        </div>
-                        
-                        <div id="login-step-2" style="display: none;">
-                            <div class="alert alert-info">
-                                <strong>提示：</strong>如果看不到验证码，说明JavDB无法访问，请配置代理。
-                            </div>
-                            <div class="text-center mb-3">
-                                <img id="captcha-image" src="" alt="验证码" style="max-width: 300px; border: 1px solid #ddd; padding: 10px;">
-                                <br>
-                                <button class="btn btn-sm btn-secondary mt-2" onclick="getJavDBCaptcha()">
-                                    <i class="bi bi-arrow-clockwise"></i> 刷新验证码
-                                </button>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">验证码</label>
-                                <input type="text" class="form-control" id="javdb-captcha" placeholder="请输入上图中的验证码">
-                            </div>
-                            <button class="btn btn-success" onclick="submitJavDBLogin()">
-                                <i class="bi bi-check-circle"></i> 提交登录
-                            </button>
-                        </div>
-                        
-                        <div id="login-loading" style="display: none;">
-                            <div class="text-center">
-                                <div class="spinner-border text-primary" role="status">
-                                    <span class="visually-hidden">加载中...</span>
-                                </div>
-                                <p class="mt-3">正在处理...</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    // 添加模态框到页面（如果不存在）
-    if (!document.getElementById('javdbLoginModal')) {
-        document.body.insertAdjacentHTML('beforeend', loginForm);
-    }
-    
-    // 显示模态框
-    const modal = new bootstrap.Modal(document.getElementById('javdbLoginModal'));
-    modal.show();
-}
-
-// 获取验证码
-async function getJavDBCaptcha() {
-    const username = document.getElementById('javdb-username').value;
-    const password = document.getElementById('javdb-password').value;
-    
-    if (!username || !password) {
-        showToast('请先输入用户名和密码', 'warning');
+async function saveCookies(verifyAfter = false) {
+    const textarea = document.getElementById('cookie-input');
+    if (!textarea) {
         return;
     }
-    
-    // 显示加载状态
-    document.getElementById('login-step-1').style.display = 'none';
-    document.getElementById('login-loading').style.display = 'block';
-    
+
+    const content = textarea.value.trim();
+    if (!content) {
+        showToast('请粘贴Cookies内容', 'warning');
+        return;
+    }
+
     try {
-        const response = await fetch('/api/javdb/login', {
+        const response = await fetch('/api/javdb/cookies', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                method: 'semi_auto',
-                action: 'get_captcha'
-            })
+            body: JSON.stringify({ cookies: content })
         });
-        
-        console.log('响应状态:', response.status);
-        const result = await response.json();
-        console.log('响应结果:', result);
-        
-        document.getElementById('login-loading').style.display = 'none';
-        
-        if (result.success && result.captcha_image) {
-            // 显示验证码
-            document.getElementById('captcha-image').src = result.captcha_image;
-            document.getElementById('login-step-2').style.display = 'block';
-            showToast('验证码获取成功，请输入验证码', 'info');
-        } else {
-            // 获取失败
-            document.getElementById('login-step-1').style.display = 'block';
-            showToast(result.error || '获取验证码失败，可能需要配置代理', 'danger');
-        }
-    } catch (error) {
-        console.error('获取验证码失败:', error);
-        document.getElementById('login-loading').style.display = 'none';
-        document.getElementById('login-step-1').style.display = 'block';
-        showToast('获取验证码失败', 'danger');
-    }
-}
 
-// 提交登录
-async function submitJavDBLogin() {
-    const username = document.getElementById('javdb-username').value;
-    const password = document.getElementById('javdb-password').value;
-    const captcha = document.getElementById('javdb-captcha').value;
-    
-    if (!captcha) {
-        showToast('请输入验证码', 'warning');
-        return;
-    }
-    
-    // 显示加载状态
-    document.getElementById('login-step-2').style.display = 'none';
-    document.getElementById('login-loading').style.display = 'block';
-    
-    try {
-        const response = await fetch('/api/javdb/login', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                method: 'semi_auto',
-                action: 'submit',
-                username: username,
-                password: password,
-                captcha: captcha
-            })
-        });
-        
         const result = await response.json();
-        document.getElementById('login-loading').style.display = 'none';
-        
+
         if (result.success) {
-            // 登录成功
-            showToast('登录成功！Cookies已保存', 'success');
-            // 关闭模态框
-            const modal = bootstrap.Modal.getInstance(document.getElementById('javdbLoginModal'));
-            modal.hide();
-            // 刷新Cookie状态
+            const count = result.cookie_count ?? 0;
+            showToast(`Cookies保存成功（共 ${count} 项）`, 'success');
             await checkCookieStatus();
-        } else if (result.retry && result.new_captcha) {
-            // 验证码错误，显示新验证码
-            document.getElementById('captcha-image').src = result.new_captcha;
-            document.getElementById('javdb-captcha').value = '';
-            document.getElementById('login-step-2').style.display = 'block';
-            showToast(result.error || '验证码错误，请重新输入', 'warning');
+
+            if (verifyAfter) {
+                await verifyCookies();
+            }
         } else {
-            // 其他错误
-            document.getElementById('login-step-1').style.display = 'block';
-            showToast(result.error || '登录失败', 'danger');
+            showToast(`保存失败: ${result.error || '未知错误'}`, 'danger');
         }
     } catch (error) {
-        console.error('提交登录失败:', error);
-        document.getElementById('login-loading').style.display = 'none';
-        document.getElementById('login-step-1').style.display = 'block';
-        showToast('提交登录失败', 'danger');
+        console.error('保存Cookies失败:', error);
+        showToast('保存Cookies失败', 'danger');
     }
 }
 
-// 验证Cookies
 async function verifyCookies() {
     const verifyBtn = document.getElementById('verify-btn');
-    const originalText = verifyBtn.innerHTML;
-    
+    const originalText = verifyBtn ? verifyBtn.innerHTML : '';
+
     try {
-        // 显示加载状态
-        verifyBtn.disabled = true;
-        verifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>验证中...';
-        
+        if (verifyBtn) {
+            verifyBtn.disabled = true;
+            verifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>验证中...';
+        }
+
         const response = await fetch('/api/javdb/verify-cookies', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             }
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
             if (result.valid) {
                 showToast('Cookies验证成功，可以正常使用', 'success');
             } else {
-                showToast('Cookies无效或已过期，请重新登录', 'warning');
+                showToast('Cookies无效或已过期，请重新粘贴', 'warning');
             }
-            // 刷新状态
-            await checkCookieStatus();
         } else {
-            showToast('验证失败: ' + result.error, 'danger');
+            showToast(`验证失败: ${result.error || '未知错误'}`, 'danger');
         }
-        
+
+        await checkCookieStatus();
     } catch (error) {
-        console.error('验证失败:', error);
+        console.error('验证Cookies失败:', error);
         showToast('验证请求失败', 'danger');
     } finally {
-        // 恢复按钮状态
-        verifyBtn.disabled = false;
-        verifyBtn.innerHTML = originalText;
+        if (verifyBtn) {
+            verifyBtn.disabled = false;
+            verifyBtn.innerHTML = originalText || '<i class="bi bi-check-circle"></i> 验证';
+        }
     }
 }
 
-// 清除Cookies
 async function clearCookies() {
-    if (!confirm('确定要清除所有保存的JavDB Cookies吗？清除后需要重新登录。')) {
+    if (!confirm('确定要清除所有保存的JavDB Cookies吗？此操作不可恢复。')) {
         return;
     }
-    
+
     const clearBtn = document.getElementById('clear-btn');
-    const originalText = clearBtn.innerHTML;
-    
+    const originalText = clearBtn ? clearBtn.innerHTML : '';
+
     try {
-        // 显示加载状态
-        clearBtn.disabled = true;
-        clearBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>清除中...';
-        
+        if (clearBtn) {
+            clearBtn.disabled = true;
+            clearBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>清除中...';
+        }
+
         const response = await fetch('/api/javdb/clear-cookies', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             }
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
-            showToast('Cookies已清除', 'success');
-            // 刷新状态
+            showToast(result.message || 'Cookies已清除', 'success');
             await checkCookieStatus();
         } else {
-            showToast('清除失败: ' + result.error, 'danger');
+            showToast(`清除失败: ${result.error || '未知错误'}`, 'danger');
         }
-        
     } catch (error) {
-        console.error('清除失败:', error);
+        console.error('清除Cookies失败:', error);
         showToast('清除请求失败', 'danger');
     } finally {
-        // 恢复按钮状态
-        clearBtn.disabled = false;
-        clearBtn.innerHTML = originalText;
+        if (clearBtn) {
+            clearBtn.disabled = false;
+            clearBtn.innerHTML = originalText || '<i class="bi bi-trash"></i> 清除已保存 Cookies';
+        }
     }
 }
 
-// 复制到剪贴板
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        showToast('已复制到剪贴板', 'success');
-    }).catch(err => {
-        console.error('复制失败:', err);
-        showToast('复制失败，请手动复制', 'warning');
-    });
+function clearCookieInput() {
+    const textarea = document.getElementById('cookie-input');
+    if (textarea) {
+        textarea.value = '';
+        showToast('输入已清空', 'info');
+    }
 }
 
-// 当切换到JavDB页面时，自动检查Cookie状态
 document.addEventListener('DOMContentLoaded', function() {
     const navLinks = document.querySelectorAll('.nav-link[data-page="javdb"]');
     navLinks.forEach(link => {
@@ -1607,6 +1456,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 100);
         });
     });
+});
 
 // ==================== 历史记录管理 ====================
 
@@ -1896,4 +1746,3 @@ viewHistoryDetail = function(encodedData) {
         showToast('显示详情失败', 'error');
     }
 }
-});
